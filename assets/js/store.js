@@ -41,7 +41,8 @@
     if(!state.settings) state.settings=defaultState().settings;
     ['cases','documents','searches','events'].forEach(k=>{ if(!Array.isArray(state[k])) state[k]=[]; });
     _ready=true;
-    save();
+    // 直接写入 localStorage，不触发 _scheduleSync 避免回推
+    LS.setItem(KEY, JSON.stringify(state));
   }
 
   // ---------- 默认设置 ----------
@@ -174,6 +175,12 @@
   function exportAll(){ return JSON.stringify(state,null,2); }
   function importAll(json){
     const data=JSON.parse(json);
+    if(typeof data!=='object'||data===null||Array.isArray(data))throw new Error('无效的备份格式');
+    // 校验必要字段
+    ['cases','documents','searches','events'].forEach(k=>{
+      if(data[k]!==undefined&&!Array.isArray(data[k]))throw new Error('备份字段 '+k+' 格式错误');
+    });
+    if(data.settings&&typeof data.settings!=='object')throw new Error('备份字段 settings 格式错误');
     state=Object.assign(defaultState(), data);
     state.settings.ai=Object.assign(defaultState().settings.ai, state.settings.ai||{});
     save(); return state;

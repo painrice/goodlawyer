@@ -44,6 +44,7 @@ def load_secret():
     s = secrets.token_hex(32)
     with open(SECRET_FILE, "w", encoding="utf-8") as f:
         f.write(s)
+    os.chmod(SECRET_FILE, 0o600)
     return s
 
 SECRET = load_secret()
@@ -162,11 +163,17 @@ def bootstrap(uid):
         if k == "settings":
             c.execute("SELECT payload FROM data WHERE user_id=? AND kind=?", (uid, k))
             row = c.fetchone()
-            out[k] = json.loads(row["payload"]) if row else {}
+            try:
+                out[k] = json.loads(row["payload"]) if row else {}
+            except (json.JSONDecodeError, Exception):
+                out[k] = {}
         else:
             c.execute("SELECT payload FROM data WHERE user_id=? AND kind=?", (uid, k))
             row = c.fetchone()
-            out[k] = json.loads(row["payload"]) if row else []
+            try:
+                out[k] = json.loads(row["payload"]) if row else []
+            except (json.JSONDecodeError, Exception):
+                out[k] = []
     conn.close()
     return out
 
@@ -195,7 +202,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
     server_version = "LawWorkbench/1.0"
 
     def _cors(self):
-        self.send_header("Access-Control-Allow-Origin", "*")
+        origin = self.headers.get("Origin", "")
+        # 允许同源请求；若需要跨域部署，可在此配置允许的 origin
+        allow = origin if origin else "*"
+        self.send_header("Access-Control-Allow-Origin", allow)
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
@@ -212,6 +222,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0) or 0)
         if length <= 0:
             return {}
+        if length > 10 * 1024 * 1024:  # 10MB limit
+            return {"_error": "payload too large"}
         raw = self.rfile.read(length)
         try:
             return json.loads(raw.decode("utf-8"))

@@ -38,7 +38,8 @@ const ICONS={
   chevronRight:'<path d="M9 6l6 6-6 6"/>',
   clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/>',
   file:'<path d="M6 2h8l4 4v16H6zM14 2v4h4"/>',
-  brain:'<path d="M9 4a3 3 0 0 0-3 3 3 3 0 0 0-1 5 3 3 0 0 0 2 4 3 3 0 0 0 5 1V5a3 3 0 0 0-3-1zM15 4a3 3 0 0 1 3 3 3 3 0 0 1 1 5 3 3 0 0 1-2 4 3 3 0 0 1-5 1"/>'
+  brain:'<path d="M9 4a3 3 0 0 0-3 3 3 3 0 0 0-1 5 3 3 0 0 0 2 4 3 3 0 0 0 5 1V5a3 3 0 0 0-3-1zM15 4a3 3 0 0 1 3 3 3 3 0 0 1 1 5 3 3 0 0 1-2 4 3 3 0 0 1-5 1"/>',
+  scale:'<path d="M12 3v19M4 7l4-4 4 4M20 7l-4-4-4 4M4 7l4 4H1l3-4zM20 7l-4 4h7l-3-4z"/>'
 };
 function icon(n,w){return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'+(ICONS[n]||'')+'</svg>';}
 
@@ -77,7 +78,8 @@ const PAGES={
   'law-search':{title:'法条检索',crumb:'法条定位与效力核验'},
   risk:{title:'风险研判',crumb:'争议焦点与风险矩阵'},
   voice:{title:'语音转写',crumb:'会议/约谈录音转写与纪要'},
-  settings:{title:'个人中心',crumb:'账户、AI 引擎与数据'}
+  settings:{title:'个人中心',crumb:'账户、AI 引擎与数据'},
+  'case-detail':{title:'案件详情',crumb:'案件详细信息与分析'}
 };
 const STAGES=['一审','二审','再审','执行','仲裁','其他'];
 
@@ -235,8 +237,7 @@ function openCaseModal(id){
   );
   bindParty();
 }
-let partyCount=0;
-function partyRow(p,i){p=p||{role:'原告',name:'',isClient:false};partyCount=Math.max(partyCount,i+1);
+function partyRow(p,i){p=p||{role:'原告',name:'',isClient:false};
   return '<div class="row party" data-i="'+i+'" style="margin-bottom:8px">'+
     '<input class="input" style="flex:.8" value="'+esc(p.role)+'" placeholder="角色" data-k="role">'+
     '<input class="input" style="flex:1.4" value="'+esc(p.name)+'" placeholder="姓名/名称" data-k="name">'+
@@ -335,7 +336,8 @@ function infoCard(title,rows){
     rows.map(r=>'<div class="kv"><div class="k">'+esc(r[0])+'</div><div class="v">'+esc(r[1])+'</div></div>').join('')+'</div></div>';
 }
 function analysisBlock(skill,title,val,ph){
-  return '<div class="card"><div class="card-h"><h3>'+icon('brain')+' '+title+'</h3><span class="tag blue">'+esc(skillByDir(skill).cn)+'</span></div>'+
+  const sk=skillByDir(skill);
+  return '<div class="card"><div class="card-h"><h3>'+icon('brain')+' '+title+'</h3><span class="tag blue">'+esc(sk?sk.cn:skill)+'</span></div>'+
     '<div class="card-b"><textarea class="textarea" data-analysis="'+skill+'" style="min-height:120px" placeholder="'+esc(ph)+'">'+esc(val||'')+'</textarea></div></div>';
 }
 
@@ -423,6 +425,7 @@ function renderChat(){
 async function chatSend(){
   const inp=$('#chatInput');const txt=inp.value.trim();if(!txt)return;
   chatLog.push({role:'me',text:txt});inp.value='';
+  if(chatLog.length>200)chatLog=chatLog.slice(-200);
   const ai=Store.get().settings.ai;
   let reply;
   if(ai.enabled&&ai.baseUrl&&ai.apiKey){
@@ -737,12 +740,23 @@ function voiceToggle(){
 function stopRec(){recording=false;try{recog.stop();}catch(_){}$('#recBtn').innerHTML=icon('mic')+' 开始录音';$('#recState').textContent='已停止';}
 function voiceSummary(){
   if(!transcript.trim()){toast('暂无可总结的文本','err');return;}
-  const lines=transcript.split(/[。！？\n]/).filter(Boolean);
+  const lines=transcript.split(/[。！？\n]/).filter(s=>s.trim().length>2);
   const body=$('#summaryBody');if(!body)return;
   $('#summaryCard').classList.remove('hidden');
-  body.innerHTML='<h4>一、会谈要点</h4><ul>'+lines.slice(0,8).map(l=>'<li>'+esc(l)+'</li>').join('')+'</ul>'+
-    '<h4>二、待办 / 跟进事项</h4><ul><li>（根据要点补充：如补充证据、起草文书、联系对方等）</li></ul>'+
-    '<h4>三、风险与提示</h4><ul><li>（结合 legal-document-summarization 思路，提炼关键节点与风险）</li></ul>'+
+  // 提取关键词（简单高频词）
+  const words=transcript.replace(/[，。、；：！？""''（）\s]/g,' ').split(' ').filter(w=>w.length>=2);
+  const freq={};words.forEach(w=>{freq[w]=(freq[w]||0)+1;});
+  const keywords=Object.entries(freq).sort((a,b)=>b[1]-a[1]).slice(0,8).map(e=>e[0]);
+  body.innerHTML='<h4>一、会谈要点</h4><ol>'+lines.slice(0,10).map(l=>'<li>'+esc(l.trim())+'</li>').join('')+'</ol>'+
+    '<h4>二、高频关键词</h4><div class="pill-row">'+keywords.map(w=>'<span class="tag blue">'+esc(w)+'</span>').join('')+'</div>'+
+    '<h4>三、待办 / 跟进事项</h4><ul>'+
+      lines.filter(l=>/需要|应当|必须|建议|尽快|下一步|跟进|补充/.test(l)).slice(0,5).map(l=>'<li>'+esc(l.trim())+'</li>').join('')+
+      (lines.filter(l=>/需要|应当|必须|建议|尽快|下一步|跟进|补充/.test(l)).length?'':'<li>（请根据会谈要点手动补充）</li>')+
+    '</ul>'+
+    '<h4>四、风险与提示</h4><ul>'+
+      lines.filter(l=>/风险|注意|问题|困难|争议|期限|时效|逾期/.test(l)).slice(0,5).map(l=>'<li>'+esc(l.trim())+'</li>').join('')+
+      (lines.filter(l=>/风险|注意|问题|困难|争议|期限|时效|逾期/.test(l)).length?'':'<li>（请结合案件事实评估风险）</li>')+
+    '</ul>'+
     '<div class="disclaimer" style="margin-top:10px"><div>'+icon('alert')+'</div><div>纪要为自动摘要草稿，请核对准确性后再使用。</div></div>';
   toast('已生成会谈纪要');
 }
@@ -787,9 +801,16 @@ function updateAIStatus(){
 }
 async function callAI(messages){
   const ai=Store.get().settings.ai;
-  const res=await fetch(ai.baseUrl.replace(/\/$/,'')+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+ai.apiKey},body:JSON.stringify({model:ai.model,messages,temperature:0.3})});
-  if(!res.ok)throw new Error('HTTP '+res.status);
-  const j=await res.json();return j.choices&&j.choices[0]?j.choices[0].message.content:'';
+  const ctrl=new AbortController();
+  const timer=setTimeout(()=>ctrl.abort(),30000);
+  try{
+    const res=await fetch(ai.baseUrl.replace(/\/$/,'')+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+ai.apiKey},body:JSON.stringify({model:ai.model,messages,temperature:0.3}),signal:ctrl.signal});
+    if(!res.ok)throw new Error('HTTP '+res.status);
+    const j=await res.json();return j.choices&&j.choices[0]?j.choices[0].message.content:'';
+  }catch(e){
+    if(e.name==='AbortError')throw new Error('AI 调用超时（30秒）');
+    throw e;
+  }finally{clearTimeout(timer);}
 }
 
 /* ============================================================
@@ -860,6 +881,7 @@ document.addEventListener('click',e=>{
     case 'month-next':calMonth.setMonth(calMonth.getMonth()+1);renderLitigation($('#content'));break;
     case 'add-event':addEventModal();break;
     case 'day-evts':dayEvents(el.dataset.date);break;
+    case 'del-event':delEvent(el.dataset.id,el.dataset.date);break;
     case 'wf-open':wfOpen(el.dataset.w);break;
     case 'chat-send':chatSend();break;
     case 'skill-cat':skillFilter=el.dataset.c;renderSkills($('#content'));break;
@@ -931,18 +953,26 @@ function addEventModal(){
 function dayEvents(date){
   const evs=Store.get().events.filter(e=>e.date===date);
   modal('<div class="m-h"><h3>'+date+' 的安排</h3><button class="btn ghost sm" data-act="close-modal" style="margin-left:auto">'+icon('x')+'</button></div>'+
-    '<div class="m-b">'+(evs.length?evs.map(e=>'<div class="list-item"><div class="li-ic">'+icon(e.type==='hearing'?'gavel':'clock')+'</div><div class="li-main"><b>'+esc(e.title)+'</b><span>'+(e.caseId?(Store.get().cases.find(c=>c.id===e.caseId)?esc(Store.get().cases.find(c=>c.id===e.caseId).title):''):'未关联')+'</span></div><div class="li-side"><span class="tag '+(e.type==='deadline'?'danger':(e.type==='hearing'?'warn':'blue'))+'">删除</span></div></div>').join(''):'<div class="empty">'+icon('calendar')+'<p>当天无安排</p></div>')+'</div>');
+    '<div class="m-b">'+(evs.length?evs.map(e=>'<div class="list-item"><div class="li-ic">'+icon(e.type==='hearing'?'gavel':'clock')+'</div><div class="li-main"><b>'+esc(e.title)+'</b><span>'+(e.caseId?(Store.get().cases.find(c=>c.id===e.caseId)?esc(Store.get().cases.find(c=>c.id===e.caseId).title):''):'未关联')+'</span></div><div class="li-side"><span class="tag '+(e.type==='deadline'?'danger':(e.type==='hearing'?'warn':'blue'))+'" data-act="del-event" data-id="'+e.id+'" data-date="'+date+'">删除</span></div></div>').join(''):'<div class="empty">'+icon('calendar')+'<p>当天无安排</p></div>')+'</div>');
 }
 // save-event handled via delegation? add explicit:
 document.addEventListener('click',e=>{if(e.target.closest('[data-act="save-event"]')){const c=$('#evCase').value,date=$('#evDate').value,type=$('#evType2').value,title=$('#evTitle').value.trim();if(!date||!title){toast('请填写日期与标题','err');return;}Store.addEvent({caseId:c,date,type,title});closeModal();renderLitigation($('#content'));toast('已添加');}});
 
+function delEvent(id,date){
+  if(!confirm('确定删除该事件？'))return;
+  Store.deleteEvent(id);
+  closeModal();
+  dayEvents(date);
+  renderLitigation($('#content'));
+  toast('已删除');
+}
 function wfOpen(w){
   const def=WORKFLOWS.find(x=>x.id===w);if(!def)return;
   const cases=Store.get().cases;
   modal('<div class="m-h"><h3>'+icon(def.icon)+' '+def.name+' · 结构化向导</h3><button class="btn ghost sm" data-act="close-modal" style="margin-left:auto">'+icon('x')+'</button></div>'+
     '<div class="m-b"><div class="field"><label>关联案件（可选）</label><select class="select" id="wfCase"><option value="">不关联 / 自由输入</option>'+cases.map(c=>'<option value="'+c.id+'">'+esc(c.title)+'</option>').join('')+'</select></div>'+
     '<div class="field"><label>案件事实 / 问题描述</label><textarea class="textarea" id="wfFacts" placeholder="描述案情、主体、争议与诉求…"></textarea></div>'+
-    '<div class="disclaimer"><div>'+icon('alert')+'</div><div>调用技能：'+def.skill.map(s=>skillByDir(s).cn).join(' · ')+'。以下框架离线生成，配置 AI 后可获得实时内容。</div></div>'+
+    '<div class="disclaimer"><div>'+icon('alert')+'</div><div>调用技能：'+def.skill.map(s=>{const sk=skillByDir(s);return sk?sk.cn:s;}).join(' · ')+'。以下框架离线生成，配置 AI 后可获得实时内容。</div></div>'+
     '</div>'+
     '<div class="m-f"><button class="btn" data-act="close-modal">取消</button><button class="btn primary" data-act="wf-run" data-w="'+w+'">'+icon('sparkle')+' 生成分析框架</button></div>');
 }
@@ -964,7 +994,18 @@ function wfRun(w){
   toast('已在智能辅助中生成框架');
 }
 
-function copyDoc(){const t=$('#modalMask').dataset.doc||'';navigator.clipboard&&navigator.clipboard.writeText(t);toast('已复制到剪贴板');}
+function copyDoc(){
+  const t=$('#modalMask').dataset.doc||'';
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(t).then(()=>toast('已复制到剪贴板')).catch(fallbackCopy);
+  }else{fallbackCopy();}
+  function fallbackCopy(){
+    const ta=document.createElement('textarea');ta.value=t;ta.style.cssText='position:fixed;left:-9999px';
+    document.body.appendChild(ta);ta.select();
+    try{document.execCommand('copy');toast('已复制到剪贴板');}catch(_){toast('复制失败，请手动选择复制','err');}
+    ta.remove();
+  }
+}
 function downloadDoc(name){const t=$('#modalMask').dataset.doc||'';download((name||'文书')+'.txt',t);toast('已下载');}
 function saveDoc(name,caseId){
   const t=$('#modalMask').dataset.doc||'';
