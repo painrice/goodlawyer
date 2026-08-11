@@ -122,8 +122,10 @@ def verify_token(tok):
 def create_user(username, password):
     if not username or not password:
         return None, "用户名和密码不能为空"
-    if len(password) < 6:
-        return None, "密码至少 6 位"
+    if len(password) < 8:
+        return None, "密码至少 8 位"
+    if not any(c.isalpha() for c in password) or not any(c.isdigit() for c in password):
+        return None, "密码须包含字母和数字"
     with _lock:
         conn = get_db()
         c = conn.cursor()

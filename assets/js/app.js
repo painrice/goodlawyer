@@ -254,10 +254,11 @@ function openCase(id){go('case',id);}
 /* ============================================================
    案件详情
    ============================================================ */
-let caseTab='overview';
+let caseTab='overview', lastCaseId=null;
 function renderCaseDetail(c){
   const cs=Store.getCase(curParam);
   if(!cs){c.innerHTML='<div class="empty">'+icon('case')+'<p>案件不存在</p></div>';return;}
+  if(lastCaseId!==curParam){caseTab='overview';lastCaseId=curParam;}
   const client=cs.parties.filter(p=>p.isClient).map(p=>p.name).join('、')||'-';
   const others=cs.parties.filter(p=>!p.isClient).map(p=>p.role+' '+p.name).join('；')||'-';
   const tabs=[['overview','概览'],['timeline','时间轴'],['evidence','证据材料'],['analysis','AI 分析'],['docs','文书']];
@@ -369,7 +370,7 @@ function renderLitigation(c){
    '<div class="grid cols-3" style="align-items:start">'+
      '<div class="card" style="grid-column:span 2"><div class="card-h"><h3>'+icon('calendar')+' 日程安排</h3>'+
        '<div class="spacer" style="flex:1"></div>'+
-       '<button class="btn sm" data-act="month-prev">'+icon('chevronRight')+'</button>'+
+       '<button class="btn sm" data-act="month-prev" style="transform:scaleX(-1)">'+icon('chevronRight')+'</button>'+
        '<b style="min-width:96px;text-align:center">'+monthName+'</b>'+
        '<button class="btn sm" data-act="month-next">'+icon('chevronRight')+'</button>'+
        '<button class="btn sm primary" data-act="add-event">'+icon('plus')+' 添加</button></div>'+
@@ -660,13 +661,25 @@ function renderRisk(c){
 }
 function runRisk(){
   const cs=Store.getCase(riskCaseId);if(!cs){toast('请选择案件','err');return;}
-  const risks=[
-    {name:'举证责任风险',p:3,i:3,why:'关键事实依赖我方证据完整性'},
-    {name:'时效/期限风险',p:2,i:4,why:'上诉/举证期限临近，逾期失权'},
-    {name:'法条适用风险',p:2,i:3,why:'法律关系的定性可能存在分歧'},
-    {name:'对方偿债能力',p:3,i:4,why:'即便胜诉，执行到位率待评估'},
-    {name:'程序合规风险',p:1,i:2,why:'诉讼主体/管辖等程序事项'}
-  ];
+  // 基于案件实际内容动态生成风险
+  const a=cs.analysis||{};
+  const hasAnalysis=a.risks||a.disputes||a.elements;
+  const risks=[];
+  // 基于证据完整性
+  const evScore=cs.evidence.length>=3?1:cs.evidence.length>=1?2:3;
+  risks.push({name:'举证责任风险',p:evScore,i:3,why:cs.evidence.length>=3?'已有 '+cs.evidence.length+' 份证据':'证据材料仅 '+cs.evidence.length+' 份，需补充关键证据'});
+  // 基于期限
+  const today=new Date().toISOString().slice(0,10);
+  const nearEvents=Store.get().events.filter(e=>e.caseId===cs.id&&daysBetween(e.date,today)>=0&&daysBetween(e.date,today)<=14);
+  const dlScore=nearEvents.length>0?3:1;
+  risks.push({name:'时效/期限风险',p:dlScore,i:4,why:nearEvents.length>0?'未来 14 天有 '+nearEvents.length+' 个节点临近':'暂无近期期限'});
+  // 基于标的金额
+  if(cs.amount>100000){risks.push({name:'对方偿债能力',p:3,i:4,why:'标的金额 '+fmtMoney(cs.amount)+' 元，执行到位率需评估'});}
+  // 基于分析内容
+  if(a.risks){risks.push({name:'AI 识别的风险项',p:2,i:3,why:'详见案件 AI 分析中的风险评估'});}
+  // 通用风险
+  risks.push({name:'法条适用风险',p:2,i:3,why:'法律关系的定性可能存在分歧'});
+  risks.push({name:'程序合规风险',p:1,i:2,why:'诉讼主体/管辖等程序事项'});
   // matrix 5x? -> display 4 cols (低/中/高/极高) x probability
   const body=$('#riskBody');
   const disputes=cs.analysis&&cs.analysis.disputes?cs.analysis.disputes:'（建议先在案件「AI 分析」中归纳争议焦点）';
@@ -848,9 +861,18 @@ async function aiAnalysis(id){
   if(!(ai.enabled&&ai.baseUrl&&ai.apiKey)){toast('请先在「个人中心」配置 AI 引擎','err');return;}
   toast('正在调用 AI 生成…');
   try{
-    const prompt='你是资深中国执业律师助理。请基于以下案件，输出结构化分析：1)法律要件提取 2)争议焦点 3)风险评估 4)裁判走向预判。案件：'+cs.title+'；类型：'+cs.type+'；阶段：'+cs.stage+'；法院：'+cs.court+'；背景：'+cs.background;
-    const r=await callAI([{role:'system',content:'严谨、结构化、提示需执业律师核对，不给出绝对结论。'},{role:'user',content:prompt}]);
-    const a=cs.analysis||{};a.elements=r||a.elements;
+    const r=await callAI([{role:'system',content:'你是资深中国执业律师助理。请严格按以下 JSON 格式输出，不要输出其他内容：{"elements":"法律要件提取","disputes":"争议焦点识别","risks":"风险评估","predict":"裁判走向预判"}。提示：不给出绝对结论，需执业律师核对。'},{role:'user',content:'案件：'+cs.title+'；类型：'+cs.type+'；阶段：'+cs.stage+'；法院：'+cs.court+'；背景：'+cs.background}]);
+    const a=cs.analysis||{};
+    try{
+      const parsed=JSON.parse(r);
+      if(parsed.elements)a.elements=parsed.elements;
+      if(parsed.disputes)a.disputes=parsed.disputes;
+      if(parsed.risks)a.risks=parsed.risks;
+      if(parsed.predict)a.predict=parsed.predict;
+    }catch(_){
+      // AI 未返回合法 JSON 时，整段内容写入 elements
+      a.elements=r||a.elements;
+    }
     Store.updateCase(id,{analysis:a});caseTab='analysis';renderCaseTab(cs);toast('AI 生成完成');
   }catch(e){toast('AI 调用失败：'+e.message,'err');}
 }
@@ -1103,7 +1125,17 @@ function init(){
   // sidebar nav click
   $('#nav').addEventListener('click',e=>{const it=e.target.closest('.nav-item');if(it)go(it.dataset.route);});
   // global search -> simple filter on cases
-  $('#globalSearch').addEventListener('input',e=>{const q=e.target.value.trim().toLowerCase();if(q){caseFilter.q=q;go('cases');}else{caseFilter.q='';}});
+  $('#globalSearch').addEventListener('input',e=>{const q=e.target.value.trim().toLowerCase();if(q){
+    // 搜索案件
+    caseFilter.q=q;
+    // 搜索文书
+    const st=Store.get();
+    const matchDoc=st.documents.find(d=>(d.title+d.type+d.content||'').toLowerCase().includes(q));
+    const matchSkill=window.LEGAL_SKILLS.skills.find(s=>(s.cn+s.dir+s.core||'').toLowerCase().includes(q));
+    if(matchDoc){go('draft');toast('找到匹配文书：'+matchDoc.title);}
+    else if(matchSkill){go('skills');skillFilter='all';setTimeout(()=>openSkill(matchSkill.dir),100);}
+    else{go('cases');}
+  }else{caseFilter.q='';}});
   updateAIStatus();
   wireAuth();
   window.addEventListener('hashchange',router);
