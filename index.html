@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>好律师 · 律师工作台</title>
+  <link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+  <div class="app">
+    <!-- 侧边栏 -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="logo" id="brandLogo"></div>
+        <div class="txt"><b>好律师</b><span>律师智能工作台</span></div>
+      </div>
+      <nav class="nav" id="nav"></nav>
+      <div class="foot">
+        账号数据隔离存储 · 可跨设备访问<br>
+        方法论文献：Legal-Skills-Chinese
+      </div>
+    </aside>
+
+    <!-- 主区域 -->
+    <div class="main">
+      <header class="header">
+        <div>
+          <h1 id="pageTitle">工作台</h1>
+          <div class="crumb" id="pageCrumb">案件概览与待办</div>
+        </div>
+        <div class="spacer"></div>
+        <div class="search">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <input id="globalSearch" placeholder="搜索案件 / 文书 / 技能…" />
+        </div>
+        <div class="ai-status" id="aiStatus" title="AI 引擎状态">
+          <span class="dot"></span><span id="aiStatusTxt">离线引擎</span>
+        </div>
+        <button class="btn ghost sm" id="logoutBtn" style="display:none">退出</button>
+        <div class="avatar" id="userAvatar">律</div>
+      </header>
+      <main class="content" id="content"></main>
+    </div>
+  </div>
+
+  <!-- 登录 / 注册 遮罩 -->
+  <div class="auth-mask" id="authMask">
+    <div class="auth-card">
+      <div class="auth-brand"><div class="logo" id="authLogo"></div><b>好律师 · 律师工作台</b></div>
+      <div class="auth-tabs">
+        <div class="auth-tab active" data-auth="login" id="tabLogin">登录</div>
+        <div class="auth-tab" data-auth="register" id="tabReg">注册</div>
+      </div>
+      <div class="auth-body">
+        <div class="field"><label>用户名</label><input class="input" id="authUser" placeholder="字母/数字，用于登录" autocomplete="username"></div>
+        <div class="field"><label>密码</label><input class="input" id="authPw" type="password" placeholder="至少 6 位" autocomplete="current-password"></div>
+        <div class="auth-err" id="authErr"></div>
+        <button class="btn primary block" id="authSubmit">登录</button>
+        <div class="auth-offline">
+          <a href="#" id="authOffline">后端未连接？离线继续使用（数据仅存本机）</a>
+        </div>
+        <div class="auth-note">数据保存在你的服务端账户下，按账号隔离；AI 密钥等仅随账户存储，不上传第三方。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast-wrap" id="toastWrap"></div>
+
+  <script src="assets/js/skills-data.js"></script>
+  <script src="assets/js/api.js"></script>
+  <script src="assets/js/store.js"></script>
+  <script src="assets/js/app.js"></script>
+</body>
+</html>
