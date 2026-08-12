@@ -331,3 +331,31 @@ a{color:var(--brand);text-decoration:none}
 .auth-offline{text-align:center;margin-top:12px}
 .auth-offline a{color:var(--ink-3);font-size:12.5px;text-decoration:underline;cursor:pointer}
 .auth-note{margin-top:16px;font-size:11.5px;color:var(--ink-3);line-height:1.6;border-top:1px dashed var(--border);padding-top:12px}
+
+/* audit log */
+.audit-log-filters{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.audit-log-table table{width:100%;border-collapse:collapse}
+.audit-log-table th,.audit-log-table td{padding:8px 12px;text-align:left;border-bottom:1px solid var(--border)}
+.audit-log-table th{background:var(--bg);font-size:12px;font-weight:600;color:var(--ink-3);position:sticky;top:0}
+.audit-log-table tr:hover{background:var(--brand-softer)}
+
+/* P0-2: AI 标记样式 */
+.ai-badge {
+  background: #fff0f0;
+  color: #c0392b;
+  border: 1px solid #e74c3c;
+  font-weight: 600;
+  animation: pulse-tag 2s ease-in-out infinite;
+}
+@keyframes pulse-tag {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.15); }
+  50% { box-shadow: 0 0 0 4px rgba(231, 76, 60, 0.08); }
+}
+.ai-verify-btn {
+  margin-top: 8px;
+}
+
+/* tag color variants */
+.tag.green{background:var(--ok-soft);color:var(--ok);border-color:transparent}
+.tag.red{background:var(--danger-soft);color:var(--danger);border-color:transparent}
+.tag.blue{background:var(--brand-soft);color:var(--brand-dark);border-color:transparent}

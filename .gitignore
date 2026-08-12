@@ -9,6 +9,7 @@ build/
 # 运行时数据
 data.db
 secret.txt
+encryption_key.txt
 *.db-journal
 *.db-wal
 

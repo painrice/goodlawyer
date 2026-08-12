@@ -2,6 +2,8 @@
    app.js — 好律师 · 律师工作台  主逻辑
    路由 + 各功能模块渲染与交互 + AI 引擎接入 + 语音转写 + 文书生成
    方法论来源：GitHub THUYRan/Legal-Skills-Chinese（38 原子+2 复合技能）
+   P0-2: AI 输出强制标记 + 核对工作流
+   P0-3: 期限计算改用服务端时间
    ============================================================ */
 (function(){
 'use strict';
@@ -53,6 +55,33 @@ function modal(html,w){closeModal();const mask=document.createElement('div');mas
 function closeModal(){const m=$('#modalMask');if(m)m.remove();}
 function download(filename,text){const b=new Blob([text],{type:'text/plain;charset=utf-8'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=filename;a.click();URL.revokeObjectURL(a.href);}
 
+/* ---------------- P0-3: 服务端时间 ---------------- */
+let _serverTimeOffset = 0; // 服务端时间 - 客户端时间（毫秒）
+let _serverTimeFetched = false;
+async function fetchServerTime(){
+  try{
+    const t = await Api.getTime();
+    const serverNow = new Date(t.now).getTime();
+    const clientNow = Date.now();
+    _serverTimeOffset = serverNow - clientNow;
+    _serverTimeFetched = true;
+  }catch(e){
+    // 无法连接服务端时降级用本地时间
+    _serverTimeOffset = 0;
+    _serverTimeFetched = false;
+  }
+}
+function getToday(){
+  // 返回服务端日期字符串（YYYY-MM-DD），降级用本地时间
+  return new Date(Date.now() + _serverTimeOffset).toISOString().slice(0,10);
+}
+function daysFromNow(dateStr){
+  // 从服务端今天到目标日期的天数
+  const target = new Date(dateStr).getTime();
+  const today = new Date(getToday() + 'T00:00:00').getTime();
+  return Math.round((target - today) / 86400000);
+}
+
 /* ---------------- 导航 ---------------- */
 const NAV=[
   {label:'工作台',items:[{id:'dashboard',name:'工作台',icon:'dashboard'}]},
@@ -64,6 +93,10 @@ const NAV=[
     {id:'law-search',name:'法条检索',icon:'book'},
     {id:'risk',name:'风险研判',icon:'shield'},
     {id:'voice',name:'语音转写',icon:'mic'}
+  ]},
+  {label:'实务',items:[
+    {id:'finance',name:'财务跟踪',icon:'scale'},
+    {id:'collab',name:'客户协作',icon:'user'}
   ]},
   {label:'设置',items:[{id:'settings',name:'个人中心',icon:'settings'}]}
 ];
@@ -78,6 +111,8 @@ const PAGES={
   'law-search':{title:'法条检索',crumb:'法条定位与效力核验'},
   risk:{title:'风险研判',crumb:'争议焦点与风险矩阵'},
   voice:{title:'语音转写',crumb:'会议/约谈录音转写与纪要'},
+  finance:{title:'财务跟踪',crumb:'律师费、费用与付款记录'},
+  collab:{title:'客户协作',crumb:'案件关联消息与沟通记录'},
   settings:{title:'个人中心',crumb:'账户、AI 引擎与数据'},
   'case-detail':{title:'案件详情',crumb:'案件详细信息与分析'}
 };
@@ -115,7 +150,7 @@ function go(route,param){location.hash='#/'+(param?route+'/'+param:route);}
 /* ---------------- 渲染分发 ---------------- */
 function render(){
   const c=$('#content');
-  const map={dashboard:renderDashboard,cases:renderCases,'case-detail':renderCaseDetail,litigation:renderLitigation,assistant:renderAssistant,skills:renderSkills,draft:renderDraft,'case-search':renderCaseSearch,'law-search':renderLawSearch,risk:renderRisk,voice:renderVoice,settings:renderSettings};
+  const map={dashboard:renderDashboard,cases:renderCases,'case-detail':renderCaseDetail,litigation:renderLitigation,assistant:renderAssistant,skills:renderSkills,draft:renderDraft,'case-search':renderCaseSearch,'law-search':renderLawSearch,risk:renderRisk,voice:renderVoice,finance:renderFinance,collab:renderCollab,settings:renderSettings};
   (map[curRoute]||renderDashboard)(c);
   updateAIStatus();
 }
@@ -125,8 +160,8 @@ function render(){
    ============================================================ */
 function renderDashboard(c){
   const st=Store.get();
-  const today=new Date().toISOString().slice(0,10);
-  const upcoming=st.events.filter(e=>daysBetween(e.date,today)>=0&&daysBetween(e.date,today)<=14).sort((a,b)=>a.date.localeCompare(b.date));
+  const today=getToday();
+  const upcoming=st.events.filter(e=>daysFromNow(e.date)>=0&&daysFromNow(e.date)<=14).sort((a,b)=>a.date.localeCompare(b.date));
   const recent=st.cases.slice(0,5);
   c.innerHTML=
    '<div class="grid cols-4" style="margin-bottom:16px">'+
@@ -148,11 +183,13 @@ function renderDashboard(c){
        '<div class="section-title">'+icon('clock')+' 即将到期 / 开庭</div>'+
        (upcoming.length? '<div class="list">'+upcoming.map(e=>{
           const cs=st.cases.find(x=>x.id===e.caseId);
-          const dd=daysBetween(e.date,today);
+          const dd=daysFromNow(e.date);
           const cls=e.type==='deadline'?'danger':(e.type==='hearing'?'warn':'');
+          const urgent = (e.type==='deadline'||e.type==='hearing') && dd<=3 ? ' ⚠️' : '';
+          const nonWd = window.LegalDeadline && !LegalDeadline.isWorkday(e.date) ? ' <span class="small" style="color:var(--red)">（非工作日）</span>' : '';
           return '<div class="list-item" data-act="open-case" data-id="'+e.caseId+'"><div class="li-ic">'+icon('calendar')+'</div>'+
             '<div class="li-main"><b>'+esc(e.title)+'</b><span>'+(cs?esc(cs.title):'')+'</span></div>'+
-            '<div class="li-side"><span class="tag '+(cls||'blue')+'">'+(dd===0?'今天':dd+' 天后')+'</span><br>'+fmtDate(e.date)+'</div></div>';
+            '<div class="li-side"><span class="tag '+(cls||'blue')+'">'+(dd===0?'今天':dd+' 天后')+urgent+'</span><br>'+fmtDate(e.date)+nonWd+'</div></div>';
         }).join('') : '<div class="empty">'+icon('check')+'<p>未来 14 天暂无期限安排</p></div>')+
        '</div>'+
      '</div>'+
@@ -205,6 +242,10 @@ function caseCard(cs){
   const opp=cs.parties.filter(p=>!p.isClient).map(p=>p.name).join('、');
   const stageIdx=STAGES.indexOf(cs.stage);
   const prog=stageIdx<0?0:(stageIdx+1)/STAGES.length*100;
+  const isShared = cs._shared_role;
+  const sharedTag = isShared
+    ? '<span class="tag ' + (cs._shared_role === 'editor' ? 'green' : 'amber') + '">共享·' + (cs._shared_role === 'editor' ? '可编辑' : '只读') + '</span>'
+    : '';
   return '<div class="card" style="cursor:pointer" data-act="open-case" data-id="'+cs.id+'">'+
     '<div class="card-b">'+
       '<div class="flex between center"><b style="font-size:15px">'+esc(cs.title)+'</b>'+
@@ -214,7 +255,7 @@ function caseCard(cs){
       '<div class="small">我方：'+esc(client?client.name:'-')+'　对方：'+esc(opp||'-')+'</div>'+
       '<div class="progress" style="margin-top:10px"><i style="width:'+prog+'%"></i></div>'+
       '<div class="flex between center" style="margin-top:10px"><span class="small muted">立案 '+fmtDate(cs.filingDate)+'</span>'+
-        '<span class="tag outline" data-act="del-case" data-id="'+cs.id+'">删除</span></div>'+
+        '<span style="display:flex;gap:6px">' + sharedTag + '<span class="tag outline" data-act="del-case" data-id="'+cs.id+'">删除</span></span></div>'+
     '</div></div>';
 }
 function fmtMoney(n){if(!n)return '0';if(n>=10000)return (n/10000).toFixed(n%10000?1:0)+' 万';return n.toLocaleString();}
@@ -249,7 +290,14 @@ function bindParty(){
     if(e.target.closest('[data-act="del-party"]')){e.target.closest('.party').remove();}
   };
 }
-function openCase(id){go('case',id);}
+function openCase(id){
+  // P0-4: 记录"查看案件"审计日志
+  if(Store.addAuditLog){
+    const cs = Store.getCase(id);
+    Store.addAuditLog('view', 'case', id, cs?cs.title:'');
+  }
+  go('case',id);
+}
 
 /* ============================================================
    案件详情
@@ -262,10 +310,15 @@ function renderCaseDetail(c){
   const client=cs.parties.filter(p=>p.isClient).map(p=>p.name).join('、')||'-';
   const others=cs.parties.filter(p=>!p.isClient).map(p=>p.role+' '+p.name).join('；')||'-';
   const tabs=[['overview','概览'],['timeline','时间轴'],['evidence','证据材料'],['analysis','AI 分析'],['docs','文书']];
+  const isShared = cs._shared_role;
+  const shareBtn = isShared
+    ? '<span class="tag ' + (cs._shared_role === 'editor' ? 'green' : 'amber') + '">共享·' + (cs._shared_role === 'editor' ? '可编辑' : '只读') + '</span>'
+    : '<button class="btn" data-act="share-case" data-id="'+cs.id+'">'+icon('share')+' 共享</button>';
   c.innerHTML=
     '<div class="topline"><div><b style="font-size:18px">'+esc(cs.title)+'</b> '+
       '<span class="tag '+(cs.type==='刑事'?'red':(cs.type==='行政'?'amber':'blue'))+'">'+esc(cs.type)+'</span> <span class="tag">'+esc(cs.stage)+'</span></div>'+
       '<div class="spacer" style="flex:1"></div>'+
+      shareBtn+
       '<button class="btn" data-act="nav" data-route="draft" data-case="'+cs.id+'">'+icon('doc')+' 起草文书</button>'+
       '<button class="btn" data-act="edit-case" data-id="'+cs.id+'">'+icon('edit')+' 编辑</button>'+
       '<button class="btn danger" data-act="del-case" data-id="'+cs.id+'">'+icon('trash')+' 删除</button></div>'+
@@ -302,9 +355,19 @@ function renderCaseTab(cs){
         '<button class="btn primary" style="margin-top:10px" data-act="add-tl" data-id="'+cs.id+'">'+icon('plus')+' 添加</button></div></div>';
   }
   else if(caseTab==='evidence'){
+    const evCats=['全部','书证','物证','电子数据','证人证言','鉴定意见','勘验笔录','其他'];
+    const activeCat = window._evCat || '全部';
+    let evList = cs.evidence;
+    if(activeCat!=='全部') evList = evList.filter(e=>(e.type||'其他')===activeCat);
     b.innerHTML='<div class="card"><div class="card-h"><h3>证据材料（'+cs.evidence.length+'）</h3></div><div class="card-b">'+
-      (cs.evidence.length?'<div class="list">'+cs.evidence.map((e,i)=>'<div class="list-item"><div class="li-ic">'+icon('file')+'</div><div class="li-main"><b>'+esc(e.name)+'</b><span>'+esc(e.type||'')+' · '+esc(e.note||'')+'</span></div><div class="li-side"><span class="tag danger" data-act="del-ev" data-id="'+cs.id+'" data-i="'+i+'">删除</span></div></div>').join('')+'</div>':'<div class="empty">'+icon('file')+'<p>暂无证据材料</p></div>')+
-      '<div class="divider"></div><div class="row"><input class="input" id="evName" placeholder="证据名称"><input class="input" id="evType" placeholder="类型（书证/物证/电子数据…）"></div>'+
+      '<div class="pill-row" style="margin-bottom:12px">'+evCats.map(c=>'<span class="tag '+(activeCat===c?'blue':'outline')+'" data-act="ev-cat" data-c="'+c+'">'+c+'</span>').join('')+'</div>'+
+      (evList.length?'<div class="list">'+evList.map((e,i)=>{
+        const realIdx = cs.evidence.indexOf(e);
+        return '<div class="list-item"><div class="li-ic">'+icon('file')+'</div><div class="li-main"><b>'+esc(e.name)+'</b><span>'+esc(e.type||'其他')+' · '+esc(e.note||'')+'</span></div><div class="li-side">'+
+          '<span class="tag outline" data-act="edit-ev" data-id="'+cs.id+'" data-i="'+realIdx+'">编辑</span> '+
+          '<span class="tag danger" data-act="del-ev" data-id="'+cs.id+'" data-i="'+realIdx+'">删除</span></div></div>';
+      }).join('')+'</div>':'<div class="empty">'+icon('file')+'<p>暂无证据材料</p></div>')+
+      '<div class="divider"></div><div class="row"><input class="input" id="evName" placeholder="证据名称"><select class="select" id="evTypeSel">'+evCats.filter(c=>c!=='全部').map(c=>'<option>'+c+'</option>').join('')+'</select></div>'+
       '<input class="input" id="evNote" placeholder="证明目的/备注" style="margin-top:10px">'+
       '<button class="btn primary" style="margin-top:10px" data-act="add-ev" data-id="'+cs.id+'">'+icon('plus')+' 添加证据</button></div></div>';
   }
@@ -338,8 +401,15 @@ function infoCard(title,rows){
 }
 function analysisBlock(skill,title,val,ph){
   const sk=skillByDir(skill);
-  return '<div class="card"><div class="card-h"><h3>'+icon('brain')+' '+title+'</h3><span class="tag blue">'+esc(sk?sk.cn:skill)+'</span></div>'+
-    '<div class="card-b"><textarea class="textarea" data-analysis="'+skill+'" style="min-height:120px" placeholder="'+esc(ph)+'">'+esc(val||'')+'</textarea></div></div>';
+  const isAI = val && val.startsWith('🤖 AI 生成 · 待核对');
+  const verified = val && val.startsWith('✅ 已核对 · 原AI生成');
+  const badge = isAI ? '<span class="tag red ai-badge" data-skill="'+skill+'">🤖 待核对</span>' :
+               verified ? '<span class="tag green">✅ 已核对</span>' :
+               '<span class="tag blue">'+esc(sk?sk.cn:skill)+'</span>';
+  const btn = isAI ? '<button class="btn sm primary ai-verify-btn" data-skill="'+skill+'" style="margin-top:8px">✅ 我核对了</button>' : '';
+  const displayVal = (isAI || verified) ? (verified ? val.replace('✅ 已核对 · 原AI生成\n\n','') : val.replace('🤖 AI 生成 · 待核对\n\n','')) : (val||'');
+  return '<div class="card"><div class="card-h"><h3>'+icon('brain')+' '+title+'</h3>'+badge+'</div>'+
+    '<div class="card-b"><textarea class="textarea" data-analysis="'+skill+'" style="min-height:120px" placeholder="'+esc(ph)+'">'+esc(displayVal)+'</textarea>'+btn+'</div></div>';
 }
 
 /* ============================================================
@@ -352,7 +422,7 @@ function renderLitigation(c){
   const y=calMonth.getFullYear(),m=calMonth.getMonth();
   const first=new Date(y,m,1),startDow=(first.getDay()+6)%7;
   const days=new Date(y,m+1,0).getDate();
-  const today=new Date().toISOString().slice(0,10);
+  const today=getToday();
   let cells='';
   for(let i=0;i<startDow;i++){const dd=new Date(y,m,1-i);cells+='<div class="day other">'+dd.getDate()+'</div>';}
   for(let d=1;d<=days;d++){
@@ -365,7 +435,7 @@ function renderLitigation(c){
   }
   const monthName=y+'年 '+(m+1)+'月';
   // upcoming list
-  const upcoming=st.events.filter(e=>daysBetween(e.date,today)>=-1).sort((a,b)=>a.date.localeCompare(b.date)).slice(0,12);
+  const upcoming=st.events.filter(e=>daysFromNow(e.date)>=-1).sort((a,b)=>a.date.localeCompare(b.date)).slice(0,12);
   c.innerHTML=
    '<div class="grid cols-3" style="align-items:start">'+
      '<div class="card" style="grid-column:span 2"><div class="card-h"><h3>'+icon('calendar')+' 日程安排</h3>'+
@@ -380,8 +450,9 @@ function renderLitigation(c){
        '<div class="disclaimer" style="margin-top:14px"><div>'+icon('alert')+'</div><div>期限监控依据 trial-scheduling-and-deadline-monitoring 技能。举证期限、上诉期限、诉讼时效等法定期间请以法院文书为准，本表仅作提醒。</div></div>'+
      '</div>'+
      '<div class="card"><div class="card-h"><h3>临近节点</h3></div><div class="card-b" style="padding:6px 8px">'+
-       (upcoming.length?upcoming.map(e=>{const cs=st.cases.find(x=>x.id===e.caseId);const dd=daysBetween(e.date,today);
-         return '<div class="list-item" data-act="open-case" data-id="'+e.caseId+'"><div class="li-ic">'+icon(e.type==='hearing'?'gavel':'clock')+'</div><div class="li-main"><b>'+esc(e.title)+'</b><span>'+(cs?esc(cs.title):'')+'</span></div><div class="li-side"><span class="tag '+(e.type==='deadline'?'danger':(e.type==='hearing'?'warn':'blue'))+'">'+(dd<0?'已过期':dd===0?'今天':dd+'天')+'</span></div></div>';
+       (upcoming.length?upcoming.map(e=>{const cs=st.cases.find(x=>x.id===e.caseId);const dd=daysFromNow(e.date);
+         const urgent = (e.type==='deadline'||e.type==='hearing') && dd<=3 && dd>=0 ? ' ⚠️' : '';
+         return '<div class="list-item" data-act="open-case" data-id="'+e.caseId+'"><div class="li-ic">'+icon(e.type==='hearing'?'gavel':'clock')+'</div><div class="li-main"><b>'+esc(e.title)+'</b><span>'+(cs?esc(cs.title):'')+'</span></div><div class="li-side"><span class="tag '+(e.type==='deadline'?'danger':(e.type==='hearing'?'warn':'blue'))+'">'+(dd<0?'已过期':dd===0?'今天':dd+'天')+urgent+'</span></div></div>';
        }).join(''):'<div class="empty">'+icon('check')+'<p>暂无节点</p></div>')+
      '</div></div>'+
    '</div>';
@@ -507,22 +578,22 @@ const DOC_TEMPLATES={
   complaint:{name:'民事起诉状',fields:[['plaintiff','原告',1],['defendant','被告',1],['court','致送法院',0],['cause','案由',0],['facts','事实与理由',2],['requests','诉讼请求',2],['legalBasis','法律依据',2]],gen:d=>
     '民事起诉状\n\n原告：'+d.plaintiff+'\n被告：'+d.defendant+'\n\n致 '+d.court+'：\n\n'+(d.cause?('案由：'+d.cause+'\n\n'):'')+
     '一、诉讼请求\n'+d.requests+'\n\n二、事实与理由\n'+d.facts+
-    (d.legalBasis?('\n\n三、法律依据\n'+d.legalBasis):'')+'\n\n此致\n'+d.court+'\n\n具状人：'+d.plaintiff+'\n'+new Date().toISOString().slice(0,10)},
+    (d.legalBasis?('\n\n三、法律依据\n'+d.legalBasis):'')+'\n\n此致\n'+d.court+'\n\n具状人：'+d.plaintiff+'\n'+getToday()},
   defense:{name:'民事答辩状',fields:[['defendant','答辩人',1],['plaintiff','被答辩人',1],['court','审理法院',0],['opinion','答辩意见',2],['facts','事实与理由',2],['legalBasis','法律依据',2]],gen:d=>
     '民事答辩状\n\n答辩人：'+d.defendant+'\n被答辩人：'+d.plaintiff+'\n\n致 '+d.court+'：\n\n答辩人因与被答辩人纠纷一案，提出答辩意见如下：\n\n一、答辩意见\n'+d.opinion+
-    '\n\n二、事实与理由\n'+d.facts+(d.legalBasis?('\n\n三、法律依据\n'+d.legalBasis):'')+'\n\n此致\n'+d.court+'\n\n答辩人：'+d.defendant+'\n'+new Date().toISOString().slice(0,10)},
+    '\n\n二、事实与理由\n'+d.facts+(d.legalBasis?('\n\n三、法律依据\n'+d.legalBasis):'')+'\n\n此致\n'+d.court+'\n\n答辩人：'+d.defendant+'\n'+getToday()},
   appeal:{name:'民事上诉状',fields:[['appellant','上诉人',1],['appellee','被上诉人',1],['court','致送法院',0],['requests','上诉请求',2],['reasons','上诉理由',2]],gen:d=>
-    '民事上诉状\n\n上诉人：'+d.appellant+'\n被上诉人：'+d.appellee+'\n\n致 '+d.court+'：\n\n上诉请求：\n'+d.requests+'\n\n上诉理由：\n'+d.reasons+'\n\n此致\n'+d.court+'\n\n上诉人：'+d.appellant+'\n'+new Date().toISOString().slice(0,10)},
+    '民事上诉状\n\n上诉人：'+d.appellant+'\n被上诉人：'+d.appellee+'\n\n致 '+d.court+'：\n\n上诉请求：\n'+d.requests+'\n\n上诉理由：\n'+d.reasons+'\n\n此致\n'+d.court+'\n\n上诉人：'+d.appellant+'\n'+getToday()},
   agent:{name:'代理词',fields:[['agent','代理人',1],['client','委托人',1],['court','审理法院',0],['opinion','代理意见',2],['facts','事实梳理',2],['legalBasis','法律依据',2]],gen:d=>
-    '代 理 词\n\n尊敬的审判长、审判员：\n\n'+d.agent+'接受'+d.client+'的委托，担任其诉讼代理人。现根据事实与法律，发表代理意见如下：\n\n一、事实梳理\n'+d.facts+'\n\n二、代理意见\n'+d.opinion+(d.legalBasis?('\n\n三、法律依据\n'+d.legalBasis):'')+'\n\n以上意见，请合议庭采纳。\n\n代理人：'+d.agent+'\n'+new Date().toISOString().slice(0,10)},
+    '代 理 词\n\n尊敬的审判长、审判员：\n\n'+d.agent+'接受'+d.client+'的委托，担任其诉讼代理人。现根据事实与法律，发表代理意见如下：\n\n一、事实梳理\n'+d.facts+'\n\n二、代理意见\n'+d.opinion+(d.legalBasis?('\n\n三、法律依据\n'+d.legalBasis):'')+'\n\n以上意见，请合议庭采纳。\n\n代理人：'+d.agent+'\n'+getToday()},
   lawyerLetter:{name:'律师函',fields:[['to','致送对象',1],['client','委托人',1],['matter','委托事项',2],['facts','事实简述',2],['demand','要求与期限',2]],gen:d=>
-    '律 师 函\n\n'+d.to+'：\n\n'+d.client+'（下称"委托人"）委托本律师就'+d.matter+'事宜，特致函如下：\n\n一、事实简述\n'+d.facts+'\n\n二、律师意见及要求\n'+d.demand+'\n\n请贵方在收到本函后及时回应，以免扩大损失。\n\n'+d.client+' 授权律师\n'+new Date().toISOString().slice(0,10)},
+    '律 师 函\n\n'+d.to+'：\n\n'+d.client+'（下称"委托人"）委托本律师就'+d.matter+'事宜，特致函如下：\n\n一、事实简述\n'+d.facts+'\n\n二、律师意见及要求\n'+d.demand+'\n\n请贵方在收到本函后及时回应，以免扩大损失。\n\n'+d.client+' 授权律师\n'+getToday()},
   opinion:{name:'法律意见书',fields:[['to','致',1],['bg','背景',2],['analysis','分析',2],['conclusion','结论与建议',2]],gen:d=>
-    '法 律 意 见 书\n\n'+d.to+'：\n\n就贵方咨询事宜，本律师基于提供材料出具意见如下：\n\n一、背景\n'+d.bg+'\n\n二、法律分析\n'+d.analysis+'\n\n三、结论与建议\n'+d.conclusion+'\n\n（本意见基于有限材料，供参考，不构成正式法律意见。）\n\n出具人：\n'+new Date().toISOString().slice(0,10)},
+    '法 律 意 见 书\n\n'+d.to+'：\n\n就贵方咨询事宜，本律师基于提供材料出具意见如下：\n\n一、背景\n'+d.bg+'\n\n二、法律分析\n'+d.analysis+'\n\n三、结论与建议\n'+d.conclusion+'\n\n（本意见基于有限材料，供参考，不构成正式法律意见。）\n\n出具人：\n'+getToday()},
   contractReview:{name:'合同审查意见',fields:[['contract','合同名称',1],['scope','审查范围',2],['risks','风险条款',2],['suggestions','修改建议',2],['conclusion','总体结论',2]],gen:d=>
     '合 同 审 查 意 见\n\n合同名称：'+d.contract+'\n\n一、审查范围\n'+d.scope+'\n\n二、主要风险条款\n'+d.risks+'\n\n三、修改建议\n'+d.suggestions+'\n\n四、总体结论\n'+d.conclusion+'\n\n（本审查意见基于书面材料，具体条款效力以正式磋商与签署为准。）'},
   replyOpinion:{name:'答辩意见（二审）',fields:[['defendant','答辩人',1],['plaintiff','上诉人',1],['court','审理法院',0],['opinion','答辩意见',2],['reasons','理由',2]],gen:d=>
-    '答 辩 意 见\n\n答辩人：'+d.defendant+'\n上诉人：'+d.plaintiff+'\n\n致 '+d.court+'：\n\n针对上诉人的上诉，答辩意见如下：\n\n一、答辩意见\n'+d.opinion+'\n\n二、理由\n'+d.reasons+'\n\n此致\n'+d.court+'\n\n答辩人：'+d.defendant+'\n'+new Date().toISOString().slice(0,10)}
+    '答 辩 意 见\n\n答辩人：'+d.defendant+'\n上诉人：'+d.plaintiff+'\n\n致 '+d.court+'：\n\n针对上诉人的上诉，答辩意见如下：\n\n一、答辩意见\n'+d.opinion+'\n\n二、理由\n'+d.reasons+'\n\n此致\n'+d.court+'\n\n答辩人：'+d.defendant+'\n'+getToday()}
 };
 let draftTpl=null;
 function renderDraft(c){
@@ -669,8 +740,7 @@ function runRisk(){
   const evScore=cs.evidence.length>=3?1:cs.evidence.length>=1?2:3;
   risks.push({name:'举证责任风险',p:evScore,i:3,why:cs.evidence.length>=3?'已有 '+cs.evidence.length+' 份证据':'证据材料仅 '+cs.evidence.length+' 份，需补充关键证据'});
   // 基于期限
-  const today=new Date().toISOString().slice(0,10);
-  const nearEvents=Store.get().events.filter(e=>e.caseId===cs.id&&daysBetween(e.date,today)>=0&&daysBetween(e.date,today)<=14);
+  const nearEvents=Store.get().events.filter(e=>e.caseId===cs.id&&daysFromNow(e.date)>=0&&daysFromNow(e.date)<=14);
   const dlScore=nearEvents.length>0?3:1;
   risks.push({name:'时效/期限风险',p:dlScore,i:4,why:nearEvents.length>0?'未来 14 天有 '+nearEvents.length+' 个节点临近':'暂无近期期限'});
   // 基于标的金额
@@ -775,8 +845,153 @@ function voiceSummary(){
 }
 
 /* ============================================================
+   财务跟踪
+   ============================================================ */
+function renderFinance(c){
+  const st=Store.get();
+  const finances=st.finances;
+  // 统计
+  const totalIncome=finances.filter(f=>f.type==='income').reduce((s,f)=>s+(parseFloat(f.amount)||0),0);
+  const totalExpense=finances.filter(f=>f.type==='expense').reduce((s,f)=>s+(parseFloat(f.amount)||0),0);
+  const unpaid=finances.filter(f=>f.type==='income'&&f.status!=='paid');
+  const unpaidTotal=unpaid.reduce((s,f)=>s+(parseFloat(f.amount)||0),0);
+  c.innerHTML=
+   '<div class="grid cols-4" style="margin-bottom:16px">'+
+     stat('scale','总收入',fmtMoney(totalIncome),'已确认收入')+
+     stat('clock','待收金额',fmtMoney(unpaidTotal),''+unpaid.length+' 笔待收')+
+     stat('download','总支出',fmtMoney(totalExpense),'费用与成本')+
+     stat('check','净收入',fmtMoney(totalIncome-totalExpense),'收入 - 支出')+
+   '</div>'+
+   '<div class="card"><div class="card-h"><h3>财务记录</h3><button class="btn sm primary" data-act="add-fin">'+icon('plus')+' 记一笔</button></div><div class="card-b">'+
+     (finances.length?'<div class="list">'+finances.map(f=>{
+       const cs=st.cases.find(x=>x.id===f.caseId);
+       const isIncome=f.type==='income';
+       return '<div class="list-item"><div class="li-ic" style="background:'+(isIncome?'var(--ok-soft)':'var(--warn-soft)')+';color:'+(isIncome?'var(--ok)':'var(--warn)')+'">'+(isIncome?icon('download'):icon('upload'))+'</div>'+
+         '<div class="li-main"><b>'+esc(f.title)+'</b><span>'+esc(f.category||'')+(cs?' · '+esc(cs.title):'')+' · '+fmtDate(f.date)+'</span></div>'+
+         '<div class="li-side"><b style="color:'+(isIncome?'var(--ok)':'var(--warn)')+'">'+(isIncome?'+':'-')+fmtMoney(f.amount)+'</b>'+
+           '<br><span class="tag '+(f.status==='paid'?'green':f.status==='pending'?'amber':'outline')+'">'+(f.status==='paid'?'已结清':f.status==='pending'?'待付款':'已确认')+'</span>'+
+           '<br><span class="tag outline" data-act="edit-fin" data-id="'+f.id+'">编辑</span> <span class="tag danger" data-act="del-fin" data-id="'+f.id+'">删除</span></div></div>';
+     }).join(''):'<div class="empty">'+icon('scale')+'<p>暂无财务记录，点击「记一笔」开始</p></div>')+
+   '</div></div>';
+}
+function addFinModal(id){
+  const st=Store.get();
+  const f=id?st.finances.find(x=>x.id===id):null;
+  modal('<div class="m-h"><h3>'+(id?'编辑':'记录')+'财务</h3><button class="btn ghost sm" data-act="close-modal" style="margin-left:auto">'+icon('x')+'</button></div>'+
+    '<div class="m-b"><div class="row"><div class="field"><label>类型</label><select class="select" id="finType"><option value="income" '+(f&&f.type==='income'?'selected':'')+'>收入（律师费/顾问费等）</option><option value="expense" '+(f&&f.type==='expense'?'selected':'')+'>支出（费用/成本）</option></select></div>'+
+      '<div class="field"><label>类别</label><select class="select" id="finCat"><option value="律师费" '+(f&&f.category==='律师费'?'selected':'')+'>律师费</option><option value="诉讼费" '+(f&&f.category==='诉讼费'?'selected':'')+'>诉讼费</option><option value="差旅费" '+(f&&f.category==='差旅费'?'selected':'')+'>差旅费</option><option value="顾问费" '+(f&&f.category==='顾问费'?'selected':'')+'>顾问费</option><option value="其他" '+(f&&f.category==='其他'?'selected':'')+'>其他</option></select></div></div>'+
+    '<div class="field"><label>标题/摘要</label><input class="input" id="finTitle" value="'+esc(f?f.title:'')+'" placeholder="如：张某案一审律师费"></div>'+
+    '<div class="row"><div class="field"><label>金额（元）</label><input class="input" id="finAmount" type="number" value="'+esc(f?f.amount:'')+'" placeholder="0"></div>'+
+      '<div class="field"><label>日期</label><input class="input" id="finDate" type="date" value="'+esc(f?f.date:getToday())+'"></div></div>'+
+    '<div class="field"><label>关联案件</label><select class="select" id="finCase"><option value="">不关联</option>'+Store.get().cases.map(c=>'<option value="'+c.id+'" '+(f&&f.caseId===c.id?'selected':'')+'>'+esc(c.title)+'</option>').join('')+'</select></div>'+
+    '<div class="field"><label>状态</label><select class="select" id="finStatus"><option value="confirmed" '+(f&&f.status==='confirmed'?'selected':'')+'>已确认</option><option value="pending" '+(f&&f.status==='pending'?'selected':'')+'>待付款</option><option value="paid" '+(f&&f.status==='paid'?'selected':'')+'>已结清</option></select></div>'+
+    '<div class="field"><label>备注</label><input class="input" id="finNote" value="'+esc(f?f.note||'':'')+'" placeholder="付款方式、发票号等（选填）"></div></div>'+
+    '<div class="m-f"><button class="btn" data-act="close-modal">取消</button><button class="btn primary" data-act="save-fin" data-id="'+esc(id||'')+'">'+icon('save')+' 保存</button></div>');
+}
+
+/* ============================================================
+   客户协作
+   ============================================================ */
+let collabCaseId='';
+function renderCollab(c){
+  const st=Store.get();
+  const cases=st.cases;
+  if(!collabCaseId && cases.length>0) collabCaseId=cases[0].id;
+  const msgs=Store.getMessages(collabCaseId);
+  const cs=st.cases.find(x=>x.id===collabCaseId);
+  c.innerHTML=
+   '<div class="grid cols-3" style="align-items:start">'+
+     '<div class="card" style="grid-column:span 1"><div class="card-h"><h3>'+icon('case')+' 选择案件</h3></div><div class="card-b">'+
+       (cases.length?cases.map(x=>'<div class="list-item '+(collabCaseId===x.id?'active':'')+'" data-act="collab-case" data-id="'+x.id+'"><div class="li-ic">'+icon('case')+'</div><div class="li-main"><b>'+esc(x.title)+'</b><span>'+esc(x.type)+' · '+esc(x.stage)+'</span></div></div>').join(''):'<div class="empty">'+icon('case')+'<p>暂无案件</p></div>')+
+     '</div></div>'+
+     '<div class="card" style="grid-column:span 2"><div class="card-h"><h3>'+icon('user')+' 沟通记录'+(cs?' · '+esc(cs.title):'')+'</h3></div>'+
+       '<div class="card-b"><div class="chat"><div class="chat-log" id="collabLog">'+
+         (msgs.length?msgs.map(m=>'<div class="msg '+(m.from==='me'?'me':'bot')+'"><div class="av">'+(m.from==='me'?'我':'客')+'</div><div class="bubble">'+esc(m.text)+'<br><span style="font-size:11px;opacity:.6">'+new Date(m.createdAt).toLocaleString('zh-CN')+'</span></div></div>').join(''):'<div class="empty" style="padding:40px">'+icon('user')+'<p>暂无沟通记录，在下方添加</p></div>')+
+       '</div>'+
+       '<div class="chat-in"><textarea id="collabInput" placeholder="记录与客户的沟通内容、确认事项、要求等…"></textarea><button class="btn primary" data-act="collab-send">'+icon('arrowRight')+'</button></div>'+
+     '</div></div>'+
+   '</div>'+
+   '<div class="card" style="margin-top:16px"><div class="card-h"><h3>'+icon('info')+' 使用说明</h3></div><div class="card-b">'+
+     '<div class="report">客户协作模块用于记录与委托人的沟通内容。每条记录关联到具体案件，方便回溯。<br>提示：此处为本地记录工具，不替代正式的法律沟通留痕。重要事项建议通过书面（函件/邮件）确认。</div>'+
+   '</div></div>';
+  const log=$('#collabLog');if(log)log.scrollTop=log.scrollHeight;
+  const inp=$('#collabInput');if(inp)inp.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();collabSend();}});
+}
+function collabSend(){
+  const text=$('#collabInput').value.trim();if(!text)return;
+  if(!collabCaseId){toast('请先选择案件','err');return;}
+  Store.addMessage({caseId:collabCaseId,text,from:'me'});
+  $('#collabInput').value='';
+  renderCollab($('#content'));toast('已记录');
+}
+
+function saveFin(id){
+  const title=$('#finTitle').value.trim();
+  if(!title){toast('请填写标题','err');return;}
+  const amount=parseFloat($('#finAmount').value)||0;
+  if(amount<=0){toast('请填写有效金额','err');return;}
+  const obj={
+    type:$('#finType').value,
+    category:$('#finCat').value,
+    title:title,
+    amount:amount,
+    date:$('#finDate').value||getToday(),
+    caseId:$('#finCase').value,
+    status:$('#finStatus').value,
+    note:$('#finNote').value.trim()
+  };
+  if(id){Store.updateFinance(id,obj);toast('已保存');}
+  else{Store.addFinance(obj);toast('已记录');}
+  closeModal();renderFinance($('#content'));
+}
+function delFin(id){
+  if(!confirm('确定删除该记录？'))return;
+  Store.deleteFinance(id);
+  toast('已删除');
+  renderFinance($('#content'));
+}
+
+/* ============================================================
    个人中心 / 设置
    ============================================================ */
+function renderAuditLogs(){
+  const logs=Store.getAuditLogs();
+  if(!logs.length) return '<div class="empty"><p>暂无操作记录</p></div>';
+  const actionLabels={create:'新建',update:'修改',delete:'删除','verify-ai':'核对AI'};
+  const entityLabels={case:'案件',document:'文书',search:'检索',event:'事件',finance:'财务',message:'消息',settings:'设置'};
+  return '<div class="audit-log-filters" style="margin-bottom:12px">'+
+    '<select class="select" id="auditEntityFilter" style="width:120px"><option value="">全部类型</option>'+
+    ['case','document','search','event','finance','message','settings'].map(e=>'<option value="'+e+'">'+entityLabels[e]+'</option>').join('')+
+    '</select>'+
+    '<select class="select" id="auditActionFilter" style="width:120px"><option value="">全部操作</option>'+
+    ['create','update','delete'].map(a=>'<option value="'+a+'">'+actionLabels[a]+'</option>').join('')+
+    '</select>'+
+    '<span class="muted small">共 '+logs.length+' 条记录</span>'+
+  '</div>'+
+  '<div class="audit-log-table" style="max-height:400px;overflow-y:auto">'+
+    '<table class="table"><thead><tr><th>时间</th><th>操作</th><th>类型</th><th>名称</th><th>详情</th></tr></thead><tbody>'+
+    logs.slice(0,100).map(log=>{
+      const ts=new Date(log.timestamp);
+      const timeStr=ts.toLocaleDateString('zh-CN')+' '+ts.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});
+      const actionClass=log.action==='create'?'green':(log.action==='delete'?'red':'blue');
+      let detail='';
+      if(log.changes){
+        if(Array.isArray(log.changes)){
+          detail=log.changes.length+' 项变更';
+        } else {
+          detail=(log.changes.field||'')+'：'+(typeof log.changes.from==='string'?log.changes.from.slice(0,20):'')+' → '+(typeof log.changes.to==='string'?log.changes.to.slice(0,20):'');
+        }
+      }
+      return '<tr><td class="small">'+timeStr+'</td>'+
+        '<td><span class="tag '+actionClass+'">'+actionLabels[log.action]+'</span></td>'+
+        '<td>'+entityLabels[log.entity]+'</td>'+
+        '<td>'+esc(log.entityTitle||'')+'</td>'+
+        '<td class="small muted">'+esc(detail)+'</td></tr>';
+    }).join('')+
+    '</tbody></table>'+
+  '</div>';
+}
+
 function renderSettings(c){
   const s=Store.get().settings;
   c.innerHTML=
@@ -799,6 +1014,9 @@ function renderSettings(c){
        '<div class="flex gap8 wrap"><button class="btn" data-act="export-data">'+icon('download')+' 导出备份</button>'+
          '<label class="btn">'+icon('upload')+' 导入备份<input type="file" id="importFile" accept=".json" style="display:none"></label>'+
          '<button class="btn danger" data-act="reset-data">'+icon('trash')+' 重置演示数据</button></div>'+
+     '</div></div>'+
+     '<div class="card"><div class="card-h"><h3>'+icon('clock')+' 操作日志</h3><span class="sub">记录所有数据变更</span></div><div class="card-b">'+
+       '<div id="auditLogList">'+renderAuditLogs()+'</div>'+
      '</div></div>'+
      '<div class="card"><div class="card-h"><h3>'+icon('alert')+' 免责声明</h3></div><div class="card-b">'+
        '<div class="report" style="white-space:pre-wrap">本工作台为法律智能辅助工具。\n\n所有 AI 生成内容仅供参考，不构成正式法律意见、法院裁判意见或案件结果承诺。在中国境内，案例不具有普遍约束力（最高人民法院指导性案例除外），类比推理在部分领域受严格限制。\n\n对外提交或使用任何内容前，请执业律师独立核对事实、证据、法条、金额、日期、主体及法院信息。涉及重大权益或复杂程序，建议咨询专业律师。</div>'+
@@ -832,21 +1050,22 @@ async function callAI(messages){
 function runAnalysis(id){
   const cs=Store.getCase(id);if(!cs)return;
   const a=cs.analysis||{};
-  a.elements='【法律要件提取 · legal-element-extraction】\n'+
+  const MARKER = '🤖 AI 生成 · 待核对\n\n';
+  a.elements=MARKER+'【法律要件提取 · legal-element-extraction】\n'+
     '主体：'+(cs.parties.map(p=>p.role+' '+p.name).join('；')||'（待填）')+'\n'+
     '客体/标的：'+(cs.amount?('金额 '+fmtMoney(cs.amount)+' 元'):'（待填）')+'\n'+
     '核心事实：'+(cs.background||'（待填）')+'\n'+
     '请将上述事实对照本案法律关系的构成要件逐一归类，标记缺失要件。';
-  a.disputes='【争议焦点识别 · dispute-issue-identification】\n'+
+  a.disputes=MARKER+'【争议焦点识别 · dispute-issue-identification】\n'+
     '1. 事实争点：（双方对哪些事实存在分歧？）\n'+
     '2. 法律争点：（法律关系的定性、法条适用有无分歧？）\n'+
     '3. 证据争点：（关键证据的真实性、合法性、关联性争议？）';
-  a.risks='【风险评估 · legal-risk-assessment】\n'+
+  a.risks=MARKER+'【风险评估 · legal-risk-assessment】\n'+
     '· 举证责任：我方是否掌握关键证据？缺失部分如何补强？\n'+
     '· 期限：举证/上诉/诉讼时效是否临近？\n'+
     '· 执行：即便胜诉，对方偿债能力如何？\n'+
     '· 法律适用：定性或法条选择是否存在分歧风险？';
-  a.predict='【裁判走向预判 · legal-judgment-prediction】\n'+
+  a.predict=MARKER+'【裁判走向预判 · legal-judgment-prediction】\n'+
     '基于已提取要件与可能类案，初步预判：\n'+
     '· 请求权基础是否成立：\n'+
     '· 抗辩事由是否成立：\n'+
@@ -854,7 +1073,7 @@ function runAnalysis(id){
     '（须结合案例检索与法条核验，须经执业律师判定）';
   Store.updateCase(id,{analysis:a});
   caseTab='analysis';renderCaseTab(cs);
-  toast('已生成分析框架，可逐项编辑');
+  toast('已生成分析框架，请逐项核对后标记"已核对"');
 }
 async function aiAnalysis(id){
   const cs=Store.getCase(id);const ai=Store.get().settings.ai;
@@ -863,18 +1082,44 @@ async function aiAnalysis(id){
   try{
     const r=await callAI([{role:'system',content:'你是资深中国执业律师助理。请严格按以下 JSON 格式输出，不要输出其他内容：{"elements":"法律要件提取","disputes":"争议焦点识别","risks":"风险评估","predict":"裁判走向预判"}。提示：不给出绝对结论，需执业律师核对。'},{role:'user',content:'案件：'+cs.title+'；类型：'+cs.type+'；阶段：'+cs.stage+'；法院：'+cs.court+'；背景：'+cs.background}]);
     const a=cs.analysis||{};
+    const MARKER = '🤖 AI 生成 · 待核对\n\n';
     try{
       const parsed=JSON.parse(r);
-      if(parsed.elements)a.elements=parsed.elements;
-      if(parsed.disputes)a.disputes=parsed.disputes;
-      if(parsed.risks)a.risks=parsed.risks;
-      if(parsed.predict)a.predict=parsed.predict;
+      if(parsed.elements)a.elements=MARKER+parsed.elements;
+      if(parsed.disputes)a.disputes=MARKER+parsed.disputes;
+      if(parsed.risks)a.risks=MARKER+parsed.risks;
+      if(parsed.predict)a.predict=MARKER+parsed.predict;
     }catch(_){
       // AI 未返回合法 JSON 时，整段内容写入 elements
-      a.elements=r||a.elements;
+      a.elements=MARKER+(r||a.elements);
     }
-    Store.updateCase(id,{analysis:a});caseTab='analysis';renderCaseTab(cs);toast('AI 生成完成');
+    Store.updateCase(id,{analysis:a});caseTab='analysis';renderCaseTab(cs);toast('AI 生成完成 — 请核对后标记"已核对"');
   }catch(e){toast('AI 调用失败：'+e.message,'err');}
+}
+
+/**
+ * P0-2: 律师核对 AI 输出后标记"已核对"
+ * 将前缀从 "🤖 AI 生成 · 待核对" 改为 "✅ 已核对 · 原AI生成"
+ * 并记录审计日志
+ */
+function aiVerify(id, skill){
+  const cs = Store.getCase(id);
+  if(!cs) return;
+  const a = cs.analysis || {};
+  const val = a[skill];
+  if(!val || !val.startsWith('🤖 AI 生成 · 待核对')){
+    toast('无需核对：该字段非 AI 生成或已核对');
+    return;
+  }
+  // 替换前缀
+  a[skill] = val.replace('🤖 AI 生成 · 待核对', '✅ 已核对 · 原AI生成');
+  Store.updateCase(id, {analysis: a});
+  // 审计日志：记录核对操作
+  if(Store.addAuditLog){
+    Store.addAuditLog('verify-ai', 'case-analysis', id, cs.title + ' · ' + skill);
+  }
+  renderCaseTab(cs);
+  toast('已标记核对完成 ✓');
 }
 
 /* ============================================================
@@ -890,13 +1135,17 @@ document.addEventListener('click',e=>{
     case 'save-case':saveCase(id);break;
     case 'del-case':delCase(id);break;
     case 'open-case':openCase(id);break;
+    case 'ai-verify':aiVerify(id, el.dataset.skill);break;
     case 'add-party':addPartyRow();break;
     case 'save-case-x':break;
     case 'del-party':break;
     case 'case-tab':caseTab=el.dataset.t;renderCaseDetail($('#content'));break;
     case 'add-tl':addTimeline(id);break;
     case 'add-ev':addEvidence(id);break;
+    case 'edit-ev':editEvidence(id,parseInt(el.dataset.i));break;
+    case 'save-ev':saveEvidence(id,parseInt(el.dataset.i));break;
     case 'del-ev':delEvidence(id,el.dataset.i);break;
+    case 'ev-cat':window._evCat=el.dataset.c;renderCaseTab(Store.getCase(curParam));break;
     case 'run-analysis':runAnalysis(id);break;
     case 'ai-analysis':aiAnalysis(id);break;
     case 'month-prev':calMonth.setMonth(calMonth.getMonth()-1);renderLitigation($('#content'));break;
@@ -915,6 +1164,10 @@ document.addEventListener('click',e=>{
     case 'download-doc':downloadDoc(el.dataset.name);break;
     case 'save-doc':saveDoc(el.dataset.name,el.dataset.case);break;
     case 'open-doc':openDoc(id);break;
+    case 'view-ver':viewVersion(id);break;
+    case 'restore-ver':restoreVersion(id);break;
+    case 'edit-doc':editDoc(id);break;
+    case 'save-edit-doc':saveEditDoc(id);break;
     case 'gen-case-q':genCaseQuery();break;
     case 'gen-law-q':genLawQuery();break;
     case 'open-search':openSearch(id);break;
@@ -922,6 +1175,16 @@ document.addEventListener('click',e=>{
     case 'run-risk':runRisk();break;
     case 'voice-toggle':voiceToggle();break;
     case 'voice-summary':voiceSummary();break;
+    case 'add-fin':addFinModal(null);break;
+    case 'edit-fin':addFinModal(id);break;
+    case 'save-fin':saveFin(id);break;
+    case 'del-fin':delFin(id);break;
+    case 'share-case':openShareModal(id);break;
+    case 'share-search':shareSearchUser();break;
+    case 'share-add':shareAddUser(id);break;
+    case 'unshare':unshareUser(id, el.dataset.username);break;
+    case 'collab-case':collabCaseId=id;renderCollab($('#content'));break;
+    case 'collab-send':collabSend();break;
     case 'save-settings':saveSettings();break;
     case 'save-ai':saveAI();break;
     case 'export-data':download('lawyer-workbench-backup.json',Store.exportAll());toast('已导出备份');break;
@@ -940,8 +1203,22 @@ function saveCase(id){
   if(!title){toast('请填写案件标题','err');return;}
   const parties=[...$('#partyBox').querySelectorAll('.party')].map(p=>({role:p.querySelector('[data-k=role]').value.trim(),name:p.querySelector('[data-k=name]').value.trim(),isClient:p.querySelector('[data-k=isClient]').checked})).filter(p=>p.name);
   const obj={title,type:$('#cType').value,stage:$('#cStage').value,court:$('#cCourt').value.trim(),
-    amount:parseFloat($('#cAmount').value)||0,filingDate:$('#cDate').value||new Date().toISOString().slice(0,10),
+    amount:parseFloat($('#cAmount').value)||0,filingDate:$('#cDate').value||getToday(),
     parties:parties.length?parties:[{role:'原告',name:'',isClient:true}],background:$('#cBg').value.trim()};
+  // 利益冲突检查
+  const conflicts=Store.checkConflict(obj.parties, id||null);
+  const highConflicts=conflicts.filter(c=>c.level==='high');
+  if(highConflicts.length>0){
+    const msg='⚠️ 利益冲突警告\n\n发现以下当事人与您现有案件存在对立关系：\n\n'+
+      highConflicts.map(c=>'· '+c.partyName+'：在「'+c.caseTitle+'」中为'+c.otherRole+'，本案中为'+c.myRole).join('\n')+
+      '\n\n请确认是否存在利益冲突。根据律师执业规范，同一律师不得在同一案件中代理双方当事人。';
+    if(!confirm(msg)) return;
+  } else if(conflicts.length>0){
+    const msg='提示：以下当事人在您其他案件中也出现过：\n\n'+
+      conflicts.map(c=>'· '+c.partyName+'（'+c.myRole+'）也在「'+c.caseTitle+'」中作为'+c.otherRole).join('\n')+
+      '\n\n请留意是否存在关联关系。是否继续保存？';
+    if(!confirm(msg)) return;
+  }
   if(id){Store.updateCase(id,obj);toast('已保存');closeModal();openCase(id);}
   else{const c=Store.addCase(obj);toast('案件已创建');closeModal();openCase(c.id);}
 }
@@ -958,19 +1235,74 @@ function addTimeline(id){
 function addEvidence(id){
   const cs=Store.getCase(id);const name=$('#evName').value.trim();
   if(!name){toast('请填写证据名称','err');return;}
-  cs.evidence.push({name,type:$('#evType').value.trim(),note:$('#evNote').value.trim()});
-  Store.updateCase(id,{evidence:cs.evidence});caseTab='evidence';renderCaseTab(cs);toast('已添加证据');
+  cs.evidence.push({name,type:$('#evTypeSel').value,note:$('#evNote').value.trim()});
+  Store.updateCase(id,{evidence:cs.evidence});caseTab='evidence';
+  $('#evName').value='';$('#evNote').value='';
+  renderCaseTab(cs);toast('已添加证据');
+}
+function editEvidence(id,i){
+  const cs=Store.getCase(id);const e=cs.evidence[i];if(!e)return;
+  modal('<div class="m-h"><h3>编辑证据</h3><button class="btn ghost sm" data-act="close-modal" style="margin-left:auto">'+icon('x')+'</button></div>'+
+    '<div class="m-b"><div class="field"><label>证据名称</label><input class="input" id="eEvName" value="'+esc(e.name)+'"></div>'+
+    '<div class="field"><label>类型</label><select class="select" id="eEvType">'+['书证','物证','电子数据','证人证言','鉴定意见','勘验笔录','其他'].map(t=>'<option '+(e.type===t?'selected':'')+'>'+t+'</option>').join('')+'</select></div>'+
+    '<div class="field"><label>证明目的/备注</label><input class="input" id="eEvNote" value="'+esc(e.note||'')+'"></div></div>'+
+    '<div class="m-f"><button class="btn" data-act="close-modal">取消</button><button class="btn primary" data-act="save-ev" data-id="'+id+'" data-i="'+i+'">'+icon('save')+' 保存</button></div>');
+}
+function saveEvidence(id,i){
+  const cs=Store.getCase(id);
+  const name=$('#eEvName').value.trim();
+  if(!name){toast('请填写证据名称','err');return;}
+  cs.evidence[i]={name,type:$('#eEvType').value,note:$('#eEvNote').value.trim()};
+  Store.updateCase(id,{evidence:cs.evidence});closeModal();caseTab='evidence';renderCaseTab(cs);toast('已保存');
 }
 function delEvidence(id,i){
   const cs=Store.getCase(id);cs.evidence.splice(parseInt(i),1);Store.updateCase(id,{evidence:cs.evidence});
   caseTab='evidence';renderCaseTab(cs);
 }
 function addEventModal(){
+  const cases=Store.get().cases;
+  const periodOptions=window.LegalDeadline?Object.keys(window.LegalDeadline.LEGAL_PERIODS).map(k=>'<option value="'+k+'">'+k+'</option>').join(''):'';
   modal('<div class="m-h"><h3>添加期限 / 节点</h3><button class="btn ghost sm" data-act="close-modal" style="margin-left:auto">'+icon('x')+'</button></div>'+
-    '<div class="m-b"><div class="field"><label>关联案件</label><select class="select" id="evCase"><option value="">不关联</option>'+Store.get().cases.map(c=>'<option value="'+c.id+'">'+esc(c.title)+'</option>').join('')+'</select></div>'+
+    '<div class="m-b"><div class="field"><label>关联案件</label><select class="select" id="evCase"><option value="">不关联</option>'+cases.map(c=>'<option value="'+c.id+'">'+esc(c.title)+'</option>').join('')+'</select></div>'+
     '<div class="row"><div class="field"><label>日期</label><input class="input" id="evDate" type="date"></div><div class="field"><label>类型</label><select class="select" id="evType2"><option value="deadline">期限</option><option value="hearing">开庭</option><option value="todo">待办</option></select></div></div>'+
+    '<div id="evWorkdayHint" class="small muted" style="margin:-8px 0 8px"></div>'+
+    (periodOptions?'<div class="card" style="background:var(--bg2);border:none;padding:12px;margin-bottom:12px"><div class="small" style="margin-bottom:8px"><b>法定期间速算</b></div>'+
+      '<div class="row"><div class="field" style="margin:0"><label class="small">起算日</label><input class="input" id="evCalcStart" type="date" value="'+getToday()+'"></div>'+
+      '<div class="field" style="margin:0"><label class="small">期间类型</label><select class="select" id="evCalcPeriod">'+periodOptions+'</select></div></div>'+
+      '<button class="btn sm" id="evCalcBtn" style="margin-top:8px">计算届满日</button>'+
+      '<div id="evCalcResult" class="small" style="margin-top:6px"></div></div>':'')+
     '<div class="field"><label>标题</label><input class="input" id="evTitle" placeholder="如：举证期限届满"></div></div>'+
     '<div class="m-f"><button class="btn" data-act="close-modal">取消</button><button class="btn primary" data-act="save-event">'+icon('save')+' 保存</button></div>');
+  // 日期变更时显示工作日提示
+  const dateInput=$('#evDate');
+  if(dateInput && window.LegalDeadline){
+    dateInput.addEventListener('change',function(){
+      const hint=$('#evWorkdayHint');
+      if(!hint||!this.value)return;
+      const isWd=LegalDeadline.isWorkday(this.value);
+      hint.textContent=isWd?'工作日':'非工作日（节假日/周末）';
+      hint.style.color=isWd?'':'var(--red)';
+    });
+  }
+  // 法定期间速算按钮
+  const calcBtn=$('#evCalcBtn');
+  if(calcBtn){
+    calcBtn.addEventListener('click',function(){
+      const start=$('#evCalcStart').value;
+      const period=$('#evCalcPeriod').value;
+      if(!start){toast('请选择起算日','err');return;}
+      const result=LegalDeadline.calcLegalPeriod(start, period);
+      if(!result){toast('无法计算','err');return;}
+      const info=LegalDeadline.LEGAL_PERIODS[period];
+      const wdCount=LegalDeadline.workdaysBetween(start, result.deadline);
+      $('#evCalcResult').innerHTML='<b>届满日：'+result.deadline+'</b>（'+wdCount+' 个工作日）<br><span class="muted">'+info.note+'</span>';
+      // 自动填入日期和标题
+      $('#evDate').value=result.deadline;
+      if(!$('#evTitle').value) $('#evTitle').value=period+'届满';
+      // 触发工作日提示
+      $('#evDate').dispatchEvent(new Event('change'));
+    });
+  }
 }
 function dayEvents(date){
   const evs=Store.get().events.filter(e=>e.date===date);
@@ -1034,11 +1366,48 @@ function saveDoc(name,caseId){
   Store.addDoc({title:name+(caseId?'':'（草稿）'),type:name,caseId:caseId||'',content:t});
   toast('已保存到文书库');closeModal();
 }
-function openDoc(id){const d=Store.get().documents.find(x=>x.id===id);if(!d)return;
+let curDocId=null;
+function openDoc(id){
+  const d=Store.get().documents.find(x=>x.id===id);if(!d)return;
+  curDocId=id;
+  const versions=Store.getDocVersions(id);
   modal('<div class="m-h"><h3>'+esc(d.title)+'</h3><button class="btn ghost sm" data-act="close-modal" style="margin-left:auto">'+icon('x')+'</button></div>'+
-    '<div class="m-b"><div class="doc-preview">'+esc(d.content)+'</div></div>'+
-    '<div class="m-f"><button class="btn" data-act="copy-doc">'+icon('copy')+' 复制</button><button class="btn danger" data-act="del-doc" data-id="'+d.id+'">'+icon('trash')+' 删除</button></div>','720px');
+    '<div class="m-b">'+
+      '<div class="doc-preview" id="docPreview">'+esc(d.content)+'</div>'+
+      '<div class="divider"></div>'+
+      '<div class="section-title">'+icon('clock')+' 版本历史（'+versions.length+'）</div>'+
+      '<div class="version-list" id="versionList">'+
+        (versions.length?versions.map((v,i)=>'<div class="version-item '+(i===0?'current':'')+'"><div class="v-info"><b>v'+v.versionNum+'</b><span class="muted small">'+esc(v.reason)+' · '+fmtDate(v.createdAt)+'</span></div>'+
+          '<div class="v-actions">'+(i>0?'<span class="tag outline" data-act="view-ver" data-id="'+v.id+'">查看</span> <span class="tag blue" data-act="restore-ver" data-id="'+v.id+'">恢复</span>':'<span class="tag green">当前版本</span>')+'</div></div>').join(''):'<div class="empty small">暂无历史版本</div>')+
+      '</div>'+
+    '</div>'+
+    '<div class="m-f"><button class="btn" data-act="copy-doc">'+icon('copy')+' 复制</button><button class="btn" data-act="edit-doc" data-id="'+d.id+'">'+icon('edit')+' 编辑</button><button class="btn danger" data-act="del-doc" data-id="'+d.id+'">'+icon('trash')+' 删除</button></div>','760px');
   $('#modalMask').dataset.doc=d.content;
+}
+function viewVersion(versionId){
+  const ver=Store.getDocVersions(curDocId).find(v=>v.id===versionId);if(!ver)return;
+  $('#docPreview').innerHTML='<div style="background:var(--warn-soft);padding:8px 12px;border-radius:8px;margin-bottom:10px;font-size:12px">📌 查看历史版本 v'+ver.versionNum+'（'+esc(ver.reason)+' · '+fmtDate(ver.createdAt)+'）— 只读预览</div>'+esc(ver.content);
+}
+function restoreVersion(versionId){
+  if(!confirm('确定恢复到该版本？当前内容将作为新版本保存。'))return;
+  const doc=Store.restoreDocVersion(versionId);
+  if(doc){toast('已恢复为 v'+Store.getDocVersions(doc.id).length+'（基于历史版本）');closeModal();openDoc(doc.id);}
+  else toast('恢复失败','err');
+}
+function editDoc(id){
+  const d=Store.get().documents.find(x=>x.id===id);if(!d)return;
+  closeModal();
+  modal('<div class="m-h"><h3>编辑文书</h3><button class="btn ghost sm" data-act="close-modal" style="margin-left:auto">'+icon('x')+'</button></div>'+
+    '<div class="m-b"><div class="field"><label>标题</label><input class="input" id="eDocTitle" value="'+esc(d.title)+'"></div>'+
+    '<div class="field"><label>内容</label><textarea class="textarea" id="eDocContent" style="min-height:300px">'+esc(d.content)+'</textarea></div></div>'+
+    '<div class="m-f"><button class="btn" data-act="close-modal">取消</button><button class="btn primary" data-act="save-edit-doc" data-id="'+d.id+'">'+icon('save')+' 保存（生成新版本）</button></div>','760px');
+}
+function saveEditDoc(id){
+  const title=$('#eDocTitle').value.trim();
+  const content=$('#eDocContent').value.trim();
+  if(!title){toast('请填写标题','err');return;}
+  Store.updateDoc(id,{title,content});
+  toast('已保存为新版本');closeModal();openDoc(id);
 }
 document.addEventListener('click',e=>{if(e.target.closest('[data-act="del-doc"]')){const id=e.target.closest('[data-act="del-doc"]').dataset.id;Store.deleteDoc(id);closeModal();toast('已删除');renderDraft($('#content'));}});
 function delSearch(id){Store.deleteSearch(id);closeModal();toast('已删除');router();}
@@ -1116,12 +1485,101 @@ function onUnauth(){
   $('#content').innerHTML=''; $('#logoutBtn').style.display='none';
 }
 
+/* ---------------- 共享管理 ---------------- */
+let _shareSearchTimer = null;
+let _shareCaseId = null;
+function openShareModal(caseId){
+  const cs = Store.getCase(caseId);
+  if(!cs){toast('案件不存在','err');return;}
+  if(cs._shared_role){toast('该案件为共享案件，无法再次共享','err');return;}
+  _shareCaseId = caseId;
+  modal(
+    '<div class="m-h"><h3>共享案件：'+esc(cs.title)+'</h3><button class="btn ghost sm" data-act="close-modal">'+icon('x')+'</button></div>'+
+    '<div class="m-b">'+
+      '<div class="field"><label>搜索用户</label><input class="input" id="shareQ" placeholder="输入用户名搜索..."></div>'+
+      '<div id="shareResults" class="small muted" style="margin-bottom:12px"></div>'+
+      '<div class="field"><label>已共享给</label><div id="shareList" style="min-height:40px"></div></div>'+
+    '</div>'+
+    '<div class="m-f"><button class="btn" data-act="close-modal">关闭</button></div>'
+  );
+  loadShareList(caseId);
+  $('#shareQ').addEventListener('input', e => {
+    clearTimeout(_shareSearchTimer);
+    const q = e.target.value.trim();
+    if(!q){$('#shareResults').innerHTML='';return;}
+    _shareSearchTimer = setTimeout(() => searchShareUser(q), 300);
+  });
+}
+async function searchShareUser(q){
+  const box = $('#shareResults');
+  box.innerHTML = '<span class="muted">搜索中...</span>';
+  try {
+    const data = await Api.searchUsers(q);
+    if(!data.users || !data.users.length){box.innerHTML='<span class="muted">未找到用户</span>';return;}
+    box.innerHTML = data.users.map(u =>
+      '<div class="list-item" style="padding:6px 8px"><div class="li-main"><b>'+esc(u.username)+'</b></div>'+
+      '<div class="li-side"><button class="btn sm" data-act="share-add" data-uid="'+u.id+'" data-username="'+esc(u.username)+'">添加</button></div></div>'
+    ).join('');
+  } catch(e){
+    box.innerHTML = '<span class="muted">搜索失败：'+esc(e.message)+'</span>';
+  }
+}
+async function shareAddUser(uid){
+  const username = (document.querySelector('[data-uid="'+uid+'"]')?.closest('.list-item')?.querySelector('b')?.textContent) || '';
+  const role = confirm('点击「确定」设为可编辑，点击「取消」设为只读') ? 'editor' : 'viewer';
+  try {
+    await Api.share(username, _shareCaseId, role);
+    toast('已共享给 '+username+'（'+(role==='editor'?'可编辑':'只读')+'）');
+    loadShareList(_shareCaseId);
+    $('#shareResults').innerHTML='';
+    $('#shareQ').value='';
+  } catch(e){
+    toast(e.message,'err');
+  }
+}
+async function loadShareList(caseId){
+  const box = $('#shareList');
+  box.innerHTML = '<span class="muted">加载中...</span>';
+  try {
+    const data = await Api.getShares();
+    const shares = (data.my_shares || []).filter(s => s.case_id === caseId);
+    if(!shares.length){box.innerHTML='<span class="muted">尚未共享给任何人</span>';return;}
+    box.innerHTML = shares.map(s =>
+      '<div class="list-item" style="padding:6px 8px"><div class="li-main"><b>'+esc(s.username)+'</b>'+
+        '<span class="tag '+(s.role==='editor'?'green':'amber')+'" style="margin-left:6px">'+(s.role==='editor'?'可编辑':'只读')+'</span>'+
+        '<span class="small muted" style="margin-left:6px">'+esc(s.created_at)+'</span></div>'+
+      '<div class="li-side"><button class="btn sm danger" data-act="unshare" data-username="'+esc(s.username)+'">取消共享</button></div></div>'
+    ).join('');
+  } catch(e){
+    box.innerHTML = '<span class="muted">加载失败：'+esc(e.message)+'</span>';
+  }
+}
+async function unshareUser(caseId, username){
+  if(!confirm('确定取消与 '+username+' 的共享？'))return;
+  try {
+    await Api.unshare(_shareCaseId, username);
+    toast('已取消共享');
+    loadShareList(_shareCaseId);
+  } catch(e){
+    toast(e.message,'err');
+  }
+}
+
 /* ---------------- 启动 ---------------- */
 function init(){
   $('#brandLogo').innerHTML=icon('scale' in ICONS?'scale':'gavel');
   $('#authLogo').innerHTML=icon('scale' in ICONS?'scale':'gavel');
   Store.load();
   buildNav();
+  // P0-3: 启动时拉取服务端时间（用于期限计算，失败时降级本地时间）
+  if(window.Api) fetchServerTime().catch(()=>{});
+  // 同步冲突提示
+  if(Store.onSyncConflict){
+    Store.onSyncConflict(function(info){
+      const mins=Math.round(info.elapsed/60000);
+      toast('数据同步提醒：本地有 '+mins+' 分钟未同步的修改，请注意多设备数据一致性','warn');
+    });
+  }
   // sidebar nav click
   $('#nav').addEventListener('click',e=>{const it=e.target.closest('.nav-item');if(it)go(it.dataset.route);});
   // global search -> simple filter on cases

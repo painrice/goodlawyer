@@ -1,6 +1,6 @@
 /* ============================================================
    api.js — 前端与后端通信层
-   负责：注册 / 登录 / 拉取全量(bootstrap) / 推送全量(sync)
+   负责：注册 / 登录 / 拉取全量(bootstrap) / 推送全量(sync) / 服务端时间
    token 由 Store 托管；401 时广播 wb-unauth 事件由 app.js 处理登出
    ============================================================ */
 (function () {
@@ -45,6 +45,27 @@
     },
     sync(state) {
       return _req("PUT", "/sync", state);
+    },
+    /**
+     * 获取服务端时间（P0-3：期限计算不再依赖客户端本地时间）
+     */
+    getTime() {
+      return _req("GET", "/time");
+    },
+    /**
+     * 共享相关 API
+     */
+    getShares() {
+      return _req("GET", "/shares");
+    },
+    searchUsers(q) {
+      return _req("GET", "/users/search?q=" + encodeURIComponent(q));
+    },
+    share(username, caseId, role) {
+      return _req("POST", "/share", { username, case_id: caseId, role });
+    },
+    unshare(caseId, username) {
+      return _req("DELETE", "/share/" + caseId + "/" + username);
     },
   };
 })();
