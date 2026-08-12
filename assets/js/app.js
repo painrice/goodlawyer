@@ -43,7 +43,7 @@ const ICONS={
   brain:'<path d="M9 4a3 3 0 0 0-3 3 3 3 0 0 0-1 5 3 3 0 0 0 2 4 3 3 0 0 0 5 1V5a3 3 0 0 0-3-1zM15 4a3 3 0 0 1 3 3 3 3 0 0 1 1 5 3 3 0 0 1-2 4 3 3 0 0 1-5 1"/>',
   scale:'<path d="M12 3v19M4 7l4-4 4 4M20 7l-4-4-4 4M4 7l4 4H1l3-4zM20 7l-4 4h7l-3-4z"/>'
 };
-function icon(n,w){return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'+(ICONS[n]||'')+'</svg>';}
+function icon(n,w){return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+(ICONS[n]||'')+'</svg>';}
 
 /* ---------------- 工具 ---------------- */
 const $=s=>document.querySelector(s), $a=s=>[...document.querySelectorAll(s)];
@@ -52,7 +52,7 @@ function fmtDate(s){return s?String(s).slice(0,10):'-';}
 function daysBetween(a,b){const x=new Date(a),y=new Date(b);return Math.round((x-y)/86400000);}
 function toast(msg,type){const w=$('#toastWrap');const t=document.createElement('div');t.className='toast'+(type?' '+type:'');t.textContent=msg;w.appendChild(t);requestAnimationFrame(()=>t.classList.add('show'));setTimeout(()=>{t.classList.remove('show');setTimeout(()=>t.remove(),250);},2200);}
 function _escHandler(e){if(e.key==='Escape')closeModal();}
-function modal(html,w){closeModal();const mask=document.createElement('div');mask.className='modal-mask';mask.id='modalMask';mask.innerHTML='<div class="modal" style="'+(w?'width:min('+w+',100%)':'')+'">'+html+'</div>';document.body.appendChild(mask);mask.addEventListener('click',e=>{if(e.target===mask)closeModal();});document.addEventListener('keydown',_escHandler);return mask;}
+function modal(html,w){closeModal();const mask=document.createElement('div');mask.className='modal-mask';mask.id='modalMask';mask.innerHTML='<div class="modal" role="dialog" aria-modal="true" style="'+(w?'width:min('+w+',100%)':'')+'">'+html+'</div>';document.body.appendChild(mask);mask.addEventListener('click',e=>{if(e.target===mask)closeModal();});document.addEventListener('keydown',_escHandler);const firstInput=mask.querySelector('input,textarea,select,button');if(firstInput)firstInput.focus();return mask;}
 function closeModal(){const m=$('#modalMask');if(m)m.remove();document.removeEventListener('keydown',_escHandler);}
 function download(filename,text){const b=new Blob([text],{type:'text/plain;charset=utf-8'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=filename;a.click();URL.revokeObjectURL(a.href);}
 
@@ -121,8 +121,9 @@ const STAGES=['一审','二审','再审','执行','仲裁','其他'];
 
 function buildNav(){
   const nav=$('#nav');
+  nav.setAttribute('role','navigation');
   nav.innerHTML=NAV.map(g=>'<div class="nav-group"><div class="label">'+g.label+'</div>'+
-    g.items.map(it=>'<div class="nav-item" data-route="'+it.id+'">'+icon(it.icon)+'<span>'+it.name+'</span></div>').join('')+
+    g.items.map(it=>'<div class="nav-item" data-route="'+it.id+'" tabindex="0">'+icon(it.icon)+'<span>'+it.name+'</span></div>').join('')+
     '</div>').join('');
   // badges
   const casesItem=[...nav.querySelectorAll('.nav-item')].find(e=>e.dataset.route==='cases');
@@ -496,18 +497,24 @@ function renderChat(){
   log.innerHTML=chatLog.map(m=>'<div class="msg '+(m.role==='me'?'me':'bot')+'"><div class="av">'+(m.role==='me'?'我':'律')+'</div><div class="bubble">'+esc(m.text)+'</div></div>').join('');
   log.scrollTop=log.scrollHeight;
 }
+let _aiLoading=false;
 async function chatSend(){
+  if(_aiLoading) return;
   const inp=$('#chatInput');const txt=inp.value.trim();if(!txt)return;
   chatLog.push({role:'me',text:txt});inp.value='';
   if(chatLog.length>200)chatLog=chatLog.slice(-200);
   const ai=Store.get().settings.ai;
   let reply;
   if(ai.enabled&&ai.baseUrl&&ai.apiKey){
+    _aiLoading=true;
+    const sendBtn=document.querySelector('[data-act="chat-send"]');
+    if(sendBtn){sendBtn.disabled=true;sendBtn.innerHTML='⏳';}
     reply='（调用 AI 中…）';chatLog.push({role:'bot',text:reply});renderChat();
     try{
       const r=await callAI([{role:'system',content:'你是资深中国执业律师助理，基于中国大陆成文法提供严谨、结构化的法律分析辅助，不给出绝对结论，提示需执业律师核对。'},{role:'user',content:txt}]);
       chatLog[chatLog.length-1].text=r||'（AI 未返回内容）';
     }catch(e){chatLog[chatLog.length-1].text='AI 调用失败：'+e.message+'。请检查「个人中心」的接口配置与网络/CORS 设置。';}
+    finally{_aiLoading=false;if(sendBtn){sendBtn.disabled=false;sendBtn.innerHTML=icon('arrowRight');}}
   }else{
     reply=offlineReply(txt);
     chatLog.push({role:'bot',text:reply});
@@ -1078,8 +1085,12 @@ function runAnalysis(id){
   toast('已生成分析框架，请逐项核对后标记"已核对"');
 }
 async function aiAnalysis(id){
+  if(_aiLoading) return;
   const cs=Store.getCase(id);const ai=Store.get().settings.ai;
   if(!(ai.enabled&&ai.baseUrl&&ai.apiKey)){toast('请先在「个人中心」配置 AI 引擎','err');return;}
+  _aiLoading=true;
+  const btn=document.querySelector('[data-act="ai-analysis"]');
+  if(btn){btn.disabled=true;btn.textContent='AI 生成中…';}
   toast('正在调用 AI 生成…');
   try{
     const r=await callAI([{role:'system',content:'你是资深中国执业律师助理。请严格按以下 JSON 格式输出，不要输出其他内容：{"elements":"法律要件提取","disputes":"争议焦点识别","risks":"风险评估","predict":"裁判走向预判"}。提示：不给出绝对结论，需执业律师核对。'},{role:'user',content:'案件：'+cs.title+'；类型：'+cs.type+'；阶段：'+cs.stage+'；法院：'+cs.court+'；背景：'+cs.background}]);
@@ -1097,6 +1108,7 @@ async function aiAnalysis(id){
     }
     Store.updateCase(id,{analysis:a});caseTab='analysis';renderCaseTab(cs);toast('AI 生成完成 — 请核对后标记"已核对"');
   }catch(e){toast('AI 调用失败：'+e.message,'err');}
+  finally{_aiLoading=false;if(btn){btn.disabled=false;btn.innerHTML=icon('robot')+' 调用 AI 生成';}}
 }
 
 /**
@@ -1581,6 +1593,23 @@ function init(){
   $('#authLogo').innerHTML=icon('scale' in ICONS?'scale':'gavel');
   Store.load();
   buildNav();
+  // 移动端侧边栏折叠
+  const menuBtn=$('#menuToggle');
+  const overlay=$('#sidebarOverlay');
+  if(menuBtn){
+    menuBtn.addEventListener('click',()=>{
+      document.querySelector('.app').classList.toggle('sidebar-open');
+    });
+  }
+  if(overlay){
+    overlay.addEventListener('click',()=>{
+      document.querySelector('.app').classList.remove('sidebar-open');
+    });
+  }
+  // 点击导航后在移动端自动收起侧边栏
+  $('#nav').addEventListener('click',()=>{
+    if(window.innerWidth<=760) document.querySelector('.app').classList.remove('sidebar-open');
+  });
   // P0-3: 启动时拉取服务端时间（用于期限计算，失败时降级本地时间）
   if(window.Api) fetchServerTime().catch(()=>{});
   // 同步冲突提示
@@ -1592,6 +1621,7 @@ function init(){
   }
   // sidebar nav click
   $('#nav').addEventListener('click',e=>{const it=e.target.closest('.nav-item');if(it)go(it.dataset.route);});
+  $('#nav').addEventListener('keydown',e=>{if(e.key==='Enter'){const it=e.target.closest('.nav-item');if(it)go(it.dataset.route);}});
   // global search -> simple filter on cases
   $('#globalSearch').addEventListener('input',e=>{const q=e.target.value.trim().toLowerCase();if(q){
     // 搜索案件
