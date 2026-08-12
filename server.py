@@ -145,6 +145,14 @@ def init_db():
             created_at TEXT NOT NULL,
             PRIMARY KEY(case_id, shared_with))"""
     )
+    c.execute(
+        """CREATE TABLE IF NOT EXISTS data(
+            user_id INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(user_id, kind))"""
+    )
     conn.commit()
     conn.close()
 

@@ -466,7 +466,7 @@
   function _computeHash(log, prevHash) {
     const data = JSON.stringify({...log, hash: undefined});
     const payload = (prevHash || 'genesis') + '|' + data;
-    return CryptoJS ? CryptoJS.SHA256(payload).toString() : _simpleHash(payload);
+    return (typeof CryptoJS !== 'undefined' && CryptoJS.SHA256) ? CryptoJS.SHA256(payload).toString() : _simpleHash(payload);
   }
 
   function _simpleHash(str) {

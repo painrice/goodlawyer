@@ -123,6 +123,7 @@ a{color:var(--brand);text-decoration:none}
   display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--border);
 }
 .card .card-h h3{font-size:15px;font-weight:700}
+.card .card-h h3 svg{width:18px;height:18px;stroke:var(--brand-dark);flex:0 0 18px}
 .card .card-h .sub{font-size:12px;color:var(--ink-3)}
 .card .card-b{padding:16px}
 .grid{display:grid;gap:16px}
@@ -322,6 +323,7 @@ a{color:var(--brand);text-decoration:none}
 .kbd{font-family:ui-monospace,monospace;background:var(--bg);border:1px solid var(--border);border-bottom-width:2px;border-radius:6px;padding:1px 7px;font-size:12px}
 .scroll-x{overflow-x:auto}
 .topline{display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+.topline svg{width:18px;height:18px;stroke:var(--brand-dark);flex:0 0 18px}
 .section-title{font-size:15px;font-weight:700;margin:18px 0 10px;display:flex;align-items:center;gap:8px}
 .section-title svg{width:18px;height:18px;stroke:var(--brand)}
 .hidden{display:none!important}

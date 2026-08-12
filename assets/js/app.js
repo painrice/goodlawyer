@@ -43,7 +43,7 @@ const ICONS={
   brain:'<path d="M9 4a3 3 0 0 0-3 3 3 3 0 0 0-1 5 3 3 0 0 0 2 4 3 3 0 0 0 5 1V5a3 3 0 0 0-3-1zM15 4a3 3 0 0 1 3 3 3 3 0 0 1 1 5 3 3 0 0 1-2 4 3 3 0 0 1-5 1"/>',
   scale:'<path d="M12 3v19M4 7l4-4 4 4M20 7l-4-4-4 4M4 7l4 4H1l3-4zM20 7l-4 4h7l-3-4z"/>'
 };
-function icon(n,w){return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+(ICONS[n]||'')+'</svg>';}
+function icon(n,w){const s=w||16;return '<svg viewBox="0 0 24 24" width="'+s+'" height="'+s+'" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+(ICONS[n]||'')+'</svg>';}
 
 /* ---------------- 工具 ---------------- */
 const $=s=>document.querySelector(s), $a=s=>[...document.querySelectorAll(s)];
@@ -258,7 +258,7 @@ function caseCard(cs){
       '<div class="small">我方：'+esc(client?client.name:'-')+'　对方：'+esc(opp||'-')+'</div>'+
       '<div class="progress" style="margin-top:10px"><i style="width:'+prog+'%"></i></div>'+
       '<div class="flex between center" style="margin-top:10px"><span class="small muted">立案 '+fmtDate(cs.filingDate)+'</span>'+
-        '<span style="display:flex;gap:6px">' + sharedTag + '<span class="tag outline" data-act="del-case" data-id="'+cs.id+'">删除</span></span></div>'+
+        '<span style="display:flex;gap:6px">' + sharedTag + (isShared&&cs._shared_role==='viewer'?'':'<span class="tag outline" data-act="edit-case" data-id="'+cs.id+'">编辑</span>') + '<span class="tag outline" data-act="del-case" data-id="'+cs.id+'">删除</span></span></div>'+
     '</div></div>';
 }
 function fmtMoney(n){if(!n)return '0';if(n>=10000)return (n/10000).toFixed(n%10000?1:0)+' 万';return n.toLocaleString();}
@@ -761,10 +761,16 @@ function runRisk(){
   risks.push({name:'程序合规风险',p:1,i:2,why:'诉讼主体/管辖等程序事项'});
   // matrix 5x? -> display 4 cols (低/中/高/极高) x probability
   const body=$('#riskBody');
-  const disputes=cs.analysis&&cs.analysis.disputes?cs.analysis.disputes:'（建议先在案件「AI 分析」中归纳争议焦点）';
+  const hasDisputes = cs.analysis&&cs.analysis.disputes;
+  const disputes = hasDisputes ? cs.analysis.disputes : '';
+  const disputeCard = hasDisputes
+    ? '<div class="report" style="white-space:pre-wrap">'+esc(disputes)+'</div>'
+    : '<div class="empty" style="padding:10px 0"><div>'+icon('brain')+'</div><p>尚未归纳争议焦点</p></div>'+
+      '<div class="small muted" style="margin-bottom:10px">建议先在案件「AI 分析」中归纳争议焦点，生成结果会自动回填到此处。</div>'+
+      '<button class="btn primary" data-act="goto-analysis" data-id="'+cs.id+'">'+icon('brain')+' 去归纳争议焦点</button>';
   body.innerHTML=
    '<div class="grid cols-2" style="align-items:start">'+
-     '<div class="card"><div class="card-h"><h3>争议焦点</h3></div><div class="card-b"><div class="report" style="white-space:pre-wrap">'+esc(disputes||'暂无')+'</div></div></div>'+
+     '<div class="card"><div class="card-h"><h3>争议焦点</h3></div><div class="card-b">'+disputeCard+'</div></div>'+
      '<div class="card"><div class="card-h"><h3>风险矩阵</h3><span class="sub">概率 × 影响</span></div><div class="card-b">'+
        '<div class="matrix">'+
          '<div class="cell hd">影响＼概率</div><div class="cell hd">低</div><div class="cell hd">中</div><div class="cell hd">高</div><div class="cell hd">极高</div>'+
@@ -1156,6 +1162,7 @@ document.addEventListener('click',e=>{
     case 'save-case':saveCase(id);break;
     case 'del-case':delCase(id);break;
     case 'open-case':openCase(id);break;
+    case 'goto-analysis':lastCaseId=id;caseTab='analysis';go('case',id);break;
     case 'ai-verify':aiVerify(id, el.dataset.skill);break;
     case 'add-party':addPartyRow();break;
     case 'save-case-x':break;
