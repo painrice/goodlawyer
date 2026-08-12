@@ -78,7 +78,13 @@
     _serverVersion = serverData._localVersion || 0;
     _localVersion = _serverVersion;
     // 直接写入 localStorage，不触发 _scheduleSync 避免回推
-    LS.setItem(KEY, JSON.stringify(state));
+    try {
+      LS.setItem(KEY, JSON.stringify(state));
+    } catch(e) {
+      if(e.name === 'QuotaExceededError' || e.code === 22) {
+        console.warn('[Store] localStorage 配额已满，bootstrap 数据无法持久化');
+      }
+    }
   }
   function onSyncConflict(cb){ _onSyncConflict = cb; }
   function getSyncStatus(){
@@ -120,7 +126,14 @@
     return state;
   }
   function save(){
-    LS.setItem(KEY, JSON.stringify(state));
+    try {
+      LS.setItem(KEY, JSON.stringify(state));
+    } catch(e) {
+      if(e.name === 'QuotaExceededError' || e.code === 22) {
+        console.warn('[Store] localStorage 配额已满，数据可能无法持久化');
+        if(typeof toast === 'function') toast('本地存储空间已满，数据仅保存在内存中，请及时导出备份','err');
+      }
+    }
     _scheduleSync();
   }
   function get(){ return state; }
@@ -235,6 +248,10 @@
     state.cases=state.cases.filter(c=>c.id!==id);
     state.documents=state.documents.filter(d=>d.caseId!==id);
     state.events=state.events.filter(e=>e.caseId!==id);
+    state.finances=state.finances.filter(f=>f.caseId!==id);
+    state.messages=state.messages.filter(m=>m.caseId!==id);
+    state.searches=state.searches.filter(s=>s.caseId!==id);
+    state.docVersions=state.docVersions.filter(v=>v.caseId!==id);
     addAuditLog('delete', 'case', id, title);
     save();
   }
@@ -434,6 +451,7 @@
 
   // ---------- 审计日志（P0-4: 链式哈希防篡改）----------
   const MAX_AUDIT_LOGS = 1000;
+  let _chainAnchor = null; // 截断后保留的最旧条目的前驱哈希
 
   function _computeHash(log, prevHash) {
     const data = JSON.stringify({...log, hash: undefined});
@@ -442,7 +460,6 @@
   }
 
   function _simpleHash(str) {
-    // 简单 djb2 hash（当 CryptoJS 不可用时降级）
     let h = 5381;
     for (let i = 0; i < str.length; i++) {
       h = ((h << 5) + h) + str.charCodeAt(i);
@@ -452,7 +469,7 @@
   }
 
   function _getLastHash() {
-    if (!state.auditLogs.length) return 'genesis';
+    if (!state.auditLogs.length) return _chainAnchor || 'genesis';
     return state.auditLogs[0].hash || 'genesis';
   }
 
@@ -466,39 +483,29 @@
       entityTitle: entityTitle || '',
       changes: changes || null
     };
-    // 计算链式哈希：hash = SHA256(prevHash + currentData)
     log.hash = _computeHash(log, _getLastHash());
     state.auditLogs.unshift(log);
-    // 限制日志数量
     if(state.auditLogs.length > MAX_AUDIT_LOGS){
+      // 截断前：保存被移除的最旧条目的 hash 作为锚点
+      const removed = state.auditLogs[MAX_AUDIT_LOGS];
+      _chainAnchor = removed ? removed.hash : _chainAnchor;
       state.auditLogs = state.auditLogs.slice(0, MAX_AUDIT_LOGS);
     }
     return log;
   }
 
-  /**
-   * 验证审计日志完整性（链式哈希校验）
-   * 返回 { valid: bool, brokenAt: number|null }
-   */
   function verifyAuditChain() {
     if (state.auditLogs.length === 0) return { valid: true, brokenAt: null };
-    let prevHash = state.auditLogs[0].hash || 'genesis';
-    for (let i = 1; i < state.auditLogs.length; i++) {
-      const log = state.auditLogs[i];
-      const expectedHash = _computeHash(log, log._prevHash || 'genesis');
-      // 简化：仅检查连续性（实际应重建完整链）
-    }
-    // 完整重建验证
-    const logs = [...state.auditLogs].reverse(); // 从旧到新
-    let lastHash = 'genesis';
+    const logs = [...state.auditLogs].reverse();
+    let lastHash = _chainAnchor || 'genesis';
     for (let i = 0; i < logs.length; i++) {
       const expected = _computeHash(logs[i], lastHash);
       if (logs[i].hash !== expected) {
-        return { valid: false, brokenAt: logs[i].id };
+        return { valid: false, brokenAt: logs[i].id, note: _chainAnchor ? '链已截断，仅验证最近 '+state.auditLogs.length+' 条' : null };
       }
       lastHash = logs[i].hash;
     }
-    return { valid: true, brokenAt: null };
+    return { valid: true, brokenAt: null, truncated: !!_chainAnchor };
   }
 
   function getAuditLogs(filters){

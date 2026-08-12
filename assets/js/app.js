@@ -1181,8 +1181,8 @@ document.addEventListener('click',e=>{
     case 'del-fin':delFin(id);break;
     case 'share-case':openShareModal(id);break;
     case 'share-search':shareSearchUser();break;
-    case 'share-add':shareAddUser(id);break;
-    case 'unshare':unshareUser(id, el.dataset.username);break;
+    case 'share-add':shareAddUser(el.dataset.username);break;
+    case 'unshare':unshareUser(el.dataset.username);break;
     case 'collab-case':collabCaseId=id;renderCollab($('#content'));break;
     case 'collab-send':collabSend();break;
     case 'save-settings':saveSettings();break;
@@ -1256,6 +1256,7 @@ function saveEvidence(id,i){
   Store.updateCase(id,{evidence:cs.evidence});closeModal();caseTab='evidence';renderCaseTab(cs);toast('已保存');
 }
 function delEvidence(id,i){
+  if(!confirm('确定删除该证据？'))return;
   const cs=Store.getCase(id);cs.evidence.splice(parseInt(i),1);Store.updateCase(id,{evidence:cs.evidence});
   caseTab='evidence';renderCaseTab(cs);
 }
@@ -1524,8 +1525,8 @@ async function searchShareUser(q){
     box.innerHTML = '<span class="muted">搜索失败：'+esc(e.message)+'</span>';
   }
 }
-async function shareAddUser(uid){
-  const username = (document.querySelector('[data-uid="'+uid+'"]')?.closest('.list-item')?.querySelector('b')?.textContent) || '';
+async function shareAddUser(username){
+  if(!username){toast('未找到用户名','err');return;}
   const role = confirm('点击「确定」设为可编辑，点击「取消」设为只读') ? 'editor' : 'viewer';
   try {
     await Api.share(username, _shareCaseId, role);
@@ -1554,7 +1555,7 @@ async function loadShareList(caseId){
     box.innerHTML = '<span class="muted">加载失败：'+esc(e.message)+'</span>';
   }
 }
-async function unshareUser(caseId, username){
+async function unshareUser(username){
   if(!confirm('确定取消与 '+username+' 的共享？'))return;
   try {
     await Api.unshare(_shareCaseId, username);
