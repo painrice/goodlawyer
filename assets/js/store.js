@@ -19,10 +19,11 @@
 
   // ---------- 后端同步（本地优先，后台推送）----------
   let _ready=false, _syncTimer=null;
-  let _lastServerSync=0; // 上次从服务端拉取数据的时间戳
-  let _onSyncConflict=null; // 同步冲突回调
-  let _localVersion=0; // 本地版本号，每次修改递增
-  let _serverVersion=0; // 服务端版本号（bootstrap 时获取）
+  let _lastServerSync=0;
+  let _onSyncConflict=null;
+  let _localVersion=0;
+  let _serverVersion=0;
+  let _syncFailCount=0;
 
   function collections(){
     return {
@@ -48,7 +49,16 @@
           _serverVersion = res.serverVersion;
         }
         _lastServerSync = Date.now();
-      }).catch(()=>{});
+        _syncFailCount = 0;
+      }).catch(e=>{
+        _syncFailCount++;
+        if(_syncFailCount >= 3 && typeof toast === 'function'){
+          toast('数据同步失败（已重试 '+_syncFailCount+' 次），请检查网络连接','err');
+        }
+        if(_syncFailCount < 5){
+          setTimeout(()=>_scheduleSync(), Math.min(1000 * Math.pow(2, _syncFailCount), 30000));
+        }
+      });
     }, 400);
   }
   function hydrate(data){

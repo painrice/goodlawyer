@@ -6,20 +6,37 @@
 (function () {
   const BASE = "/api";
 
-  async function _req(method, path, body) {
+  const RETRYABLE = new Set([502, 503, 504]);
+  const MAX_RETRIES = 2;
+  const TIMEOUT_MS = 30000;
+
+  async function _req(method, path, body, retries) {
+    retries = retries || 0;
     const headers = { "Content-Type": "application/json" };
     const t = window.Store && window.Store.getToken ? window.Store.getToken() : "";
     if (t) headers["Authorization"] = "Bearer " + t;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
     let res;
     try {
       res = await fetch(BASE + path, {
         method,
         headers,
         body: body ? JSON.stringify(body) : undefined,
+        signal: ctrl.signal,
       });
     } catch (e) {
+      clearTimeout(timer);
+      if (e.name === 'AbortError') {
+        throw new Error("请求超时（30秒），请检查网络连接");
+      }
+      if (retries < MAX_RETRIES) {
+        await new Promise(r => setTimeout(r, 500 * Math.pow(2, retries)));
+        return _req(method, path, body, retries + 1);
+      }
       throw new Error("无法连接后端服务，请确认 server.py 已启动（默认 http://localhost:8080）");
     }
+    clearTimeout(timer);
     let data = {};
     try {
       data = await res.json();
@@ -29,7 +46,13 @@
       window.dispatchEvent(new Event("wb-unauth"));
       throw new Error("登录已过期，请重新登录");
     }
-    if (!res.ok) throw new Error(data.error || "HTTP " + res.status);
+    if (!res.ok) {
+      if (RETRYABLE.has(res.status) && retries < MAX_RETRIES) {
+        await new Promise(r => setTimeout(r, 500 * Math.pow(2, retries)));
+        return _req(method, path, body, retries + 1);
+      }
+      throw new Error(data.error || "HTTP " + res.status);
+    }
     return data;
   }
 

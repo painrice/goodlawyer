@@ -51,8 +51,9 @@ function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;',
 function fmtDate(s){return s?String(s).slice(0,10):'-';}
 function daysBetween(a,b){const x=new Date(a),y=new Date(b);return Math.round((x-y)/86400000);}
 function toast(msg,type){const w=$('#toastWrap');const t=document.createElement('div');t.className='toast'+(type?' '+type:'');t.textContent=msg;w.appendChild(t);requestAnimationFrame(()=>t.classList.add('show'));setTimeout(()=>{t.classList.remove('show');setTimeout(()=>t.remove(),250);},2200);}
-function modal(html,w){closeModal();const mask=document.createElement('div');mask.className='modal-mask';mask.id='modalMask';mask.innerHTML='<div class="modal" style="'+(w?'width:min('+w+',100%)':'')+'">'+html+'</div>';document.body.appendChild(mask);mask.addEventListener('click',e=>{if(e.target===mask)closeModal();});return mask;}
-function closeModal(){const m=$('#modalMask');if(m)m.remove();}
+function _escHandler(e){if(e.key==='Escape')closeModal();}
+function modal(html,w){closeModal();const mask=document.createElement('div');mask.className='modal-mask';mask.id='modalMask';mask.innerHTML='<div class="modal" style="'+(w?'width:min('+w+',100%)':'')+'">'+html+'</div>';document.body.appendChild(mask);mask.addEventListener('click',e=>{if(e.target===mask)closeModal();});document.addEventListener('keydown',_escHandler);return mask;}
+function closeModal(){const m=$('#modalMask');if(m)m.remove();document.removeEventListener('keydown',_escHandler);}
 function download(filename,text){const b=new Blob([text],{type:'text/plain;charset=utf-8'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=filename;a.click();URL.revokeObjectURL(a.href);}
 
 /* ---------------- P0-3: 服务端时间 ---------------- */
@@ -132,6 +133,7 @@ function setActiveNav(route){$a('.nav-item').forEach(e=>e.classList.toggle('acti
 /* ---------------- 路由 ---------------- */
 let curRoute='dashboard', curParam=null;
 function router(){
+  if(typeof stopRec==='function' && recording) stopRec();
   const h=location.hash.replace(/^#\/?/,'');
   const parts=h.split('/');
   let route=(parts[0]||'dashboard').split('?')[0];
@@ -1125,9 +1127,16 @@ function aiVerify(id, skill){
 /* ============================================================
    事件委托（全局点击）
    ============================================================ */
+let _lastSaveAct='', _lastSaveTime=0;
 document.addEventListener('click',e=>{
   const el=e.target.closest('[data-act]');if(!el)return;
   const act=el.dataset.act,id=el.dataset.id;
+  const SAVE_ACTS=['save-case','save-fin','save-event','save-settings','save-ai','save-edit-doc','gen-doc','save-doc','chat-send','collab-send'];
+  if(SAVE_ACTS.includes(act)){
+    const now=Date.now();
+    if(act===_lastSaveAct && now-_lastSaveTime<500) return;
+    _lastSaveAct=act;_lastSaveTime=now;
+  }
   switch(act){
     case 'nav':{const r=el.dataset.route;if(el.dataset.case)go(r+'?case='+el.dataset.case);else go(r);break;}
     case 'new-case':openCaseModal(null);break;
