@@ -375,6 +375,28 @@ a{color:var(--brand);text-decoration:none}
 .tag.red{background:var(--danger-soft);color:var(--danger);border-color:transparent}
 .tag.blue{background:var(--brand-soft);color:var(--brand-dark);border-color:transparent}
 
+/* ---------- Nine-Step Stepper ---------- */
+.stepper{display:flex;align-items:center;gap:0;margin-bottom:20px;padding:0 4px;overflow-x:auto}
+.step-node{display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;flex:0 0 auto;min-width:60px;position:relative}
+.step-circle{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;border:2px solid var(--border);color:var(--ink-3);background:var(--card);transition:all .2s}
+.step-label{font-size:10px;color:var(--ink-3);white-space:nowrap;text-align:center;max-width:64px;overflow:hidden;text-overflow:ellipsis}
+.step-node.active .step-circle{border-color:var(--brand);background:var(--brand);color:#fff}
+.step-node.active .step-label{color:var(--brand);font-weight:600}
+.step-node.done .step-circle{border-color:var(--ok);background:var(--ok-soft);color:var(--ok)}
+.step-node.done .step-label{color:var(--ok)}
+.step-connector{flex:1;height:2px;background:var(--border);min-width:12px;margin:0 -2px;align-self:flex-start;margin-top:15px}
+.step-connector.done{background:var(--ok)}
+.ns-step-title{font-size:16px;font-weight:700;margin-bottom:4px;display:flex;align-items:center;gap:8px}
+.ns-step-desc{font-size:13px;color:var(--ink-3);margin-bottom:14px}
+.ns-table{width:100%;border-collapse:collapse;font-size:13px}
+.ns-table th{text-align:left;padding:6px 8px;background:var(--bg-2);border-bottom:1px solid var(--border);font-weight:600;color:var(--ink-2);font-size:12px}
+.ns-table td{padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top}
+.ns-table td input,.ns-table td select,.ns-table td textarea{width:100%;border:1px solid var(--border);border-radius:4px;padding:4px 6px;font-size:12px;background:var(--card);color:var(--ink)}
+.ns-table td textarea{min-height:48px;resize:vertical}
+.ns-actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+.ns-lib-btn{font-size:12px;color:var(--brand);cursor:pointer;border:1px dashed var(--brand);border-radius:6px;padding:4px 10px;background:transparent}
+.ns-lib-btn:hover{background:var(--brand-soft)}
+
 /* ---------- Print ---------- */
 @media print {
   .sidebar, .header, .auth-mask, .toast-wrap, .modal-mask, #logoutBtn,

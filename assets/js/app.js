@@ -312,7 +312,7 @@ function renderCaseDetail(c){
   if(lastCaseId!==curParam){caseTab='overview';lastCaseId=curParam;}
   const client=cs.parties.filter(p=>p.isClient).map(p=>p.name).join('、')||'-';
   const others=cs.parties.filter(p=>!p.isClient).map(p=>p.role+' '+p.name).join('；')||'-';
-  const tabs=[['overview','概览'],['timeline','时间轴'],['evidence','证据材料'],['analysis','AI 分析'],['docs','文书']];
+  const tabs=[['overview','概览'],['timeline','时间轴'],['evidence','证据材料'],['analysis','九步法分析'],['docs','文书']];
   const isShared = cs._shared_role;
   const shareBtn = isShared
     ? '<span class="tag ' + (cs._shared_role === 'editor' ? 'green' : 'amber') + '">共享·' + (cs._shared_role === 'editor' ? '可编辑' : '只读') + '</span>'
@@ -375,16 +375,7 @@ function renderCaseTab(cs){
       '<button class="btn primary" style="margin-top:10px" data-act="add-ev" data-id="'+cs.id+'">'+icon('plus')+' 添加证据</button></div></div>';
   }
   else if(caseTab==='analysis'){
-    const a=cs.analysis||{};
-    b.innerHTML='<div class="disclaimer" style="margin-bottom:14px"><div>'+icon('alert')+'</div><div>以下为基于 Legal-Skills-Chinese 技能框架的结构化分析草稿，需执业律师逐项核对。可点击「运行分析框架」自动填充模板，或手动编辑。</div></div>'+
-      '<div class="flex gap8 wrap" style="margin-bottom:12px"><button class="btn primary" data-act="run-analysis" data-id="'+cs.id+'">'+icon('sparkle')+' 运行分析框架</button>'+
-        '<button class="btn" data-act="ai-analysis" data-id="'+cs.id+'">'+icon('robot')+' 调用 AI 生成</button></div>'+
-      '<div class="grid cols-2">'+
-        analysisBlock('legal-element-extraction','法律要件提取',a.elements,'提取本案法律关系的构成要件，按要件归类事实。')+
-        analysisBlock('dispute-issue-identification','争议焦点识别',a.disputes,'归纳双方分歧的核心法律争点。')+
-        analysisBlock('legal-risk-assessment','风险评估',a.risks,'识别我方风险、概率与影响，给出应对。')+
-        analysisBlock('legal-judgment-prediction','裁判走向预判',a.predict,'基于要件与类案，预判可能的裁判结果。')+
-      '</div>';
+    renderNineStep(cs, b);
   }
   else if(caseTab==='docs'){
     const docs=Store.get().documents.filter(d=>d.caseId===cs.id);
@@ -393,9 +384,7 @@ function renderCaseTab(cs){
       '</div></div>';
   }
   if(caseTab==='analysis'){
-    $a('#caseTabBody [data-analysis]').forEach(ta=>{
-      ta.oninput=()=>{const sk=ta.dataset.analysis;cs.analysis=cs.analysis||{};cs.analysis[sk]=ta.value;Store.updateCase(cs.id,{analysis:cs.analysis});};
-    });
+    bindNineStepEvents(cs);
   }
 }
 function infoCard(title,rows){
@@ -413,6 +402,308 @@ function analysisBlock(skill,title,val,ph){
   const displayVal = (isAI || verified) ? (verified ? val.replace('✅ 已核对 · 原AI生成\n\n','') : val.replace('🤖 AI 生成 · 待核对\n\n','')) : (val||'');
   return '<div class="card"><div class="card-h"><h3>'+icon('brain')+' '+title+'</h3>'+badge+'</div>'+
     '<div class="card-b"><textarea class="textarea" data-analysis="'+skill+'" style="min-height:120px" placeholder="'+esc(ph)+'">'+esc(displayVal)+'</textarea>'+btn+'</div></div>';
+}
+
+/* ============================================================
+   要件审判九步法 — 引导式分析
+   ============================================================ */
+function getNineStep(cs){
+  if(!cs.analysis) cs.analysis={elements:'',disputes:'',risks:'',predict:'',nineStep:null};
+  if(!cs.analysis.nineStep) cs.analysis.nineStep=window.NineStepData?NineStepData.defaultNineStep():{currentStep:1,completedSteps:[]};
+  return cs.analysis.nineStep;
+}
+
+function renderNineStep(cs, container){
+  const SD=window.NineStepData; if(!SD){container.innerHTML='<div class="empty"><p>九步法模块未加载</p></div>';return;}
+  const ns=getNineStep(cs);
+  const steps=SD.STEPS;
+  // Stepper
+  let stepperHtml='<div class="stepper">';
+  steps.forEach((s,i)=>{
+    const cls=ns.completedSteps.includes(s.num)?'done':(ns.currentStep===s.num?'active':'');
+    if(i>0) stepperHtml+='<div class="step-connector'+(ns.completedSteps.includes(steps[i-1].num)?' done':'')+'"></div>';
+    stepperHtml+='<div class="step-node '+cls+'" data-act="ns-goto" data-step="'+s.num+'"><div class="step-circle">'+(ns.completedSteps.includes(s.num)?'✓':s.num)+'</div><div class="step-label">'+esc(s.short)+'</div></div>';
+  });
+  stepperHtml+='</div>';
+  // Step content
+  const stepHtml=renderStep(ns.currentStep, cs, ns, SD);
+  container.innerHTML=stepperHtml+'<div class="card"><div class="card-b">'+stepHtml+'</div></div>';
+}
+
+function renderStep(num, cs, ns, SD){
+  const step=SD.STEPS[num-1];
+  let html='<div class="ns-step-title"><span class="tag blue">步骤 '+num+'/9</span> '+esc(step.name)+'</div>';
+  html+='<div class="ns-step-desc">'+esc(step.desc)+'</div>';
+
+  if(num===1){
+    // Step 1: Import - show case materials
+    const parties=(cs.parties||[]).map(p=>p.role+' '+p.name+(p.isClient?' (我方)':'')).join('；')||'未填写';
+    const evList=(cs.evidence||[]).map(e=>e.name+' ('+e.type+')').join('；')||'暂无证据';
+    html+='<div class="grid cols-3" style="margin-bottom:14px">'+
+      '<div class="card"><div class="card-h"><h3>当事人</h3></div><div class="card-b" style="font-size:13px">'+esc(parties)+'</div></div>'+
+      '<div class="card"><div class="card-h"><h3>案件背景</h3></div><div class="card-b" style="font-size:13px">'+esc((cs.background||'未填写').slice(0,200))+'</div></div>'+
+      '<div class="card"><div class="card-h"><h3>证据材料 ('+(cs.evidence||[]).length+')</h3></div><div class="card-b" style="font-size:13px">'+esc(evList.slice(0,200))+'</div></div>'+
+    '</div>';
+    html+='<div class="ns-actions"><button class="btn primary" data-act="ns-next" data-id="'+cs.id+'">确认材料完整，下一步 →</button></div>';
+    return html;
+  }
+
+  if(num===9){
+    // Step 9: Law application + draft generation
+    const data=ns.lawApplication||[];
+    html+=renderStepTable(num, step, data, cs);
+    html+='<div class="ns-actions">';
+    html+='<button class="btn" data-act="ns-add-row" data-id="'+cs.id+'" data-step="9">'+icon('plus')+' 添加</button>';
+    html+='<button class="btn" data-act="ns-ai" data-id="'+cs.id+'" data-step="9">'+icon('robot')+' AI 辅助</button>';
+    html+='<button class="btn primary" data-act="ns-gen-draft" data-id="'+cs.id+'" style="margin-left:auto">'+icon('doc')+' 生成文书初稿</button>';
+    html+='</div>';
+    if(ns.draftContent){
+      html+='<div style="margin-top:14px;padding:14px;background:var(--bg-2);border-radius:8px;border:1px solid var(--border)"><div style="font-weight:600;margin-bottom:8px">文书初稿</div><pre style="white-space:pre-wrap;font-size:13px;line-height:1.8;max-height:300px;overflow-y:auto">'+esc(ns.draftContent)+'</pre></div>';
+    }
+    html+=renderStepNav(cs, ns);
+    return html;
+  }
+
+  // Steps 2-8: structured table
+  const key=step.key;
+  const data=ns[key]||[];
+  // Special: step 3 has library quick-select
+  if(num===3){
+    html+='<button class="ns-lib-btn" data-act="ns-show-lib" data-id="'+cs.id+'">从请求权基础库选择</button>';
+    html+='<div style="margin-top:10px">'+renderStepTable(num, step, data, cs)+'</div>';
+  } else if(num===4){
+    html+='<button class="ns-lib-btn" data-act="ns-show-defense-lib" data-id="'+cs.id+'">从抗辩规范库选择</button>';
+    html+='<div style="margin-top:10px">'+renderStepTable(num, step, data, cs)+'</div>';
+  } else {
+    html+=renderStepTable(num, step, data, cs);
+  }
+  html+='<div class="ns-actions">';
+  html+='<button class="btn" data-act="ns-add-row" data-id="'+cs.id+'" data-step="'+num+'">'+icon('plus')+' 添加</button>';
+  html+='<button class="btn" data-act="ns-ai" data-id="'+cs.id+'" data-step="'+num+'">'+icon('robot')+' AI 辅助</button>';
+  html+='</div>';
+  html+=renderStepNav(cs, ns);
+  return html;
+}
+
+function renderStepTable(num, step, data, cs){
+  if(!step.fields) return '';
+  const fields=step.fields;
+  let html='<div style="overflow-x:auto"><table class="ns-table"><thead><tr>';
+  fields.forEach(f=>{html+='<th>'+esc(f.label)+'</th>';});
+  html+='<th style="width:40px"></th></tr></thead><tbody>';
+  if(data.length===0){
+    html+='<tr><td colspan="'+(fields.length+1)+'" style="text-align:center;color:var(--ink-3);padding:20px">暂无数据，点击「添加」或「AI 辅助」</td></tr>';
+  }
+  data.forEach((row,ri)=>{
+    html+='<tr>';
+    fields.forEach(f=>{
+      const val=row[f.key]||'';
+      if(f.type==='select'){
+        html+='<td><select data-ns-field="'+f.key+'" data-ns-row="'+ri+'">'+f.options.map(o=>'<option'+(val===o?' selected':'')+'>'+esc(o)+'</option>').join('')+'</select></td>';
+      } else if(f.type==='textarea'){
+        html+='<td><textarea data-ns-field="'+f.key+'" data-ns-row="'+ri+'" rows="2">'+esc(f.key==='elements'&&Array.isArray(val)?val.join('\n'):val)+'</textarea></td>';
+      } else if(f.type==='number'){
+        html+='<td><input type="number" data-ns-field="'+f.key+'" data-ns-row="'+ri+'" value="'+esc(val)+'"></td>';
+      } else {
+        html+='<td><input data-ns-field="'+f.key+'" data-ns-row="'+ri+'" value="'+esc(val)+'"></td>';
+      }
+    });
+    html+='<td><button class="btn sm danger" data-act="ns-del-row" data-step="'+num+'" data-row="'+ri+'" style="padding:2px 6px">'+icon('trash')+'</button></td>';
+    html+='</tr>';
+  });
+  html+='</tbody></table></div>';
+  return html;
+}
+
+function renderStepNav(cs, ns){
+  let html='<div style="display:flex;justify-content:space-between;margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">';
+  if(ns.currentStep>1) html+='<button class="btn" data-act="ns-prev" data-id="'+cs.id+'">← 上一步</button>';
+  else html+='<div></div>';
+  if(ns.currentStep<9) html+='<button class="btn primary" data-act="ns-next" data-id="'+cs.id+'">下一步 →</button>';
+  else html+='<button class="btn primary" data-act="ns-complete" data-id="'+cs.id+'">完成分析</button>';
+  html+='</div>';
+  return html;
+}
+
+function bindNineStepEvents(cs){
+  const body=$('#caseTabBody');if(!body)return;
+  // Field change handlers
+  body.querySelectorAll('[data-ns-field]').forEach(el=>{
+    el.onchange=el.oninput=()=>{
+      const ns=getNineStep(cs);
+      const step=NineStepData.STEPS[ns.currentStep-1];
+      const key=step.key;
+      const ri=parseInt(el.dataset.nsRow);
+      const field=el.dataset.nsField;
+      if(!ns[key]) ns[key]=[];
+      if(!ns[key][ri]) return;
+      let val=el.value;
+      if(field==='elements'&&typeof val==='string') val=val.split('\n').filter(Boolean);
+      ns[key][ri][field]=val;
+      Store.updateCase(cs.id,{analysis:cs.analysis});
+    };
+  });
+}
+
+function nsGotoStep(cs, step){
+  const ns=getNineStep(cs);
+  ns.currentStep=step;
+  Store.updateCase(cs.id,{analysis:cs.analysis});
+  renderCaseTab(cs);
+}
+
+function nsNextStep(cs){
+  const ns=getNineStep(cs);
+  if(!ns.completedSteps.includes(ns.currentStep)) ns.completedSteps.push(ns.currentStep);
+  if(ns.currentStep<9) ns.currentStep++;
+  Store.updateCase(cs.id,{analysis:cs.analysis});
+  renderCaseTab(cs);
+}
+
+function nsPrevStep(cs){
+  const ns=getNineStep(cs);
+  if(ns.currentStep>1) ns.currentStep--;
+  Store.updateCase(cs.id,{analysis:cs.analysis});
+  renderCaseTab(cs);
+}
+
+function nsAddRow(cs, stepNum){
+  const ns=getNineStep(cs);
+  const step=NineStepData.STEPS[stepNum-1];
+  if(!step.fields) return;
+  const key=step.key;
+  if(!ns[key]) ns[key]=[];
+  const row={id:Date.now().toString(36)};
+  step.fields.forEach(f=>{row[f.key]=f.type==='select'?f.options[0]:'';});
+  ns[key].push(row);
+  Store.updateCase(cs.id,{analysis:cs.analysis});
+  renderCaseTab(cs);
+}
+
+function nsDelRow(cs, stepNum, rowIdx){
+  const ns=getNineStep(cs);
+  const step=NineStepData.STEPS[stepNum-1];
+  const key=step.key;
+  if(ns[key]) ns[key].splice(rowIdx,1);
+  Store.updateCase(cs.id,{analysis:cs.analysis});
+  renderCaseTab(cs);
+}
+
+async function nsAI(cs, stepNum){
+  if(_aiLoading) return;
+  const ai=Store.get().settings.ai;
+  if(!(ai&&ai.enabled&&ai.baseUrl&&ai.apiKey)){toast('请先在「个人中心」配置 AI 引擎','err');return;}
+  const promptFn=NineStepData.AI_PROMPTS[stepNum];
+  if(!promptFn){toast('该步骤暂不支持 AI 辅助','err');return;}
+  _aiLoading=true;
+  toast('AI 正在分析步骤 '+stepNum+'…');
+  try{
+    const ns=getNineStep(cs);
+    const prompt=promptFn(cs, ns);
+    const result=await callAI([
+      {role:'system',content:'你是资深中国执业律师，精通要件审判九步法。请严格按 JSON 格式输出，不要输出其他内容。'},
+      {role:'user',content:prompt}
+    ]);
+    let parsed;
+    try{parsed=JSON.parse(result);}catch(e){
+      // Try to extract JSON from the response
+      const m=result.match(/\[[\s\S]*\]/);
+      if(m) parsed=JSON.parse(m[0]); else throw new Error('AI 返回格式错误');
+    }
+    if(!Array.isArray(parsed)) parsed=[parsed];
+    const step=NineStepData.STEPS[stepNum-1];
+    const key=step.key;
+    if(key&&key!=='import'){
+      ns[key]=parsed.map(row=>{const r={id:Date.now().toString(36)+Math.random().toString(36).slice(2,5)};step.fields.forEach(f=>{r[f.key]=row[f.key]!==undefined?row[f.key]:'';});return r;});
+      if(!ns.completedSteps.includes(stepNum)) ns.completedSteps.push(stepNum);
+      Store.updateCase(cs.id,{analysis:cs.analysis});
+      renderCaseTab(cs);
+      toast('AI 已填充步骤 '+stepNum+'，请逐项核对');
+    }
+  }catch(e){toast('AI 分析失败：'+e.message,'err');}
+  finally{_aiLoading=false;}
+}
+
+function nsShowLib(cs){
+  const lib=NineStepData.CLAIM_BASIS_LIB;
+  let html='<div class="m-h"><h3>请求权基础库</h3><button class="btn ghost sm" data-act="close-modal">'+icon('x')+'</button></div><div class="m-b">';
+  html+='<div style="font-size:13px;color:var(--ink-3);margin-bottom:12px">选择常用的请求权基础，快速填充到分析中：</div>';
+  lib.forEach((item,i)=>{
+    html+='<div style="padding:10px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px;cursor:pointer" data-act="ns-pick-lib" data-idx="'+i+'">';
+    html+='<div style="font-weight:600;font-size:13px">'+esc(item.causeOfAction)+' — '+esc(item.law)+' '+esc(item.article)+'</div>';
+    html+='<div style="font-size:12px;color:var(--ink-3);margin-top:4px">'+esc(item.content.slice(0,80))+'…</div>';
+    html+='<div style="font-size:11px;color:var(--brand);margin-top:4px">要件：'+esc(item.elements.join('、'))+'</div>';
+    html+='</div>';
+  });
+  html+='</div><div class="m-f"><button class="btn" data-act="close-modal">关闭</button></div>';
+  modal(html);
+}
+
+function nsPickLib(cs, idx){
+  const item=NineStepData.CLAIM_BASIS_LIB[idx];if(!item)return;
+  const ns=getNineStep(cs);
+  if(!ns.claimBasis) ns.claimBasis=[];
+  ns.claimBasis.push({id:Date.now().toString(36),causeOfAction:item.causeOfAction,law:item.law,article:item.article,content:item.content,elements:item.elements.join('\n')});
+  Store.updateCase(cs.id,{analysis:cs.analysis});
+  closeModal();
+  renderCaseTab(cs);
+  toast('已添加：'+item.law+' '+item.article);
+}
+
+function nsShowDefenseLib(cs){
+  const lib=NineStepData.DEFENSE_BASIS_LIB;
+  let html='<div class="m-h"><h3>抗辩规范库</h3><button class="btn ghost sm" data-act="close-modal">'+icon('x')+'</button></div><div class="m-b">';
+  html+='<div style="font-size:13px;color:var(--ink-3);margin-bottom:12px">选择常见的抗辩规范：</div>';
+  lib.forEach((item,i)=>{
+    html+='<div style="padding:10px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px;cursor:pointer" data-act="ns-pick-defense" data-idx="'+i+'">';
+    html+='<div style="font-weight:600;font-size:13px"><span class="tag amber" style="margin-right:6px">'+esc(item.defenseType)+'</span>'+esc(item.law)+' '+esc(item.article)+'</div>';
+    html+='<div style="font-size:12px;color:var(--ink-3);margin-top:4px">'+esc(item.content.slice(0,80))+'…</div>';
+    html+='</div>';
+  });
+  html+='</div><div class="m-f"><button class="btn" data-act="close-modal">关闭</button></div>';
+  modal(html);
+}
+
+function nsPickDefense(cs, idx){
+  const item=NineStepData.DEFENSE_BASIS_LIB[idx];if(!item)return;
+  const ns=getNineStep(cs);
+  if(!ns.defenseBasis) ns.defenseBasis=[];
+  ns.defenseBasis.push({id:Date.now().toString(36),party:'被告',defenseType:item.defenseType,law:item.law,article:item.article,content:item.content});
+  Store.updateCase(cs.id,{analysis:cs.analysis});
+  closeModal();
+  renderCaseTab(cs);
+  toast('已添加：'+item.law+' '+item.article);
+}
+
+function nsGenDraft(cs){
+  const ns=getNineStep(cs);
+  const claims=(ns.claims||[]).map(c=>c.description+(c.amount?'（'+fmtMoney(c.amount)+'元）':'')).join('；');
+  const basis=(ns.claimBasis||[]).map(b=>b.law+' '+b.article).join('、');
+  const elements=(ns.elements||[]).map(e=>e.element+'：'+e.facts+'（'+e.status+'）').join('\n');
+  const disputes=(ns.disputes||[]).map(d=>d.issue+'（'+d.type+'）').join('；');
+  const findings=(ns.factFindings||[]).map(f=>f.fact+'：'+f.determination).join('；');
+  const lawApp=(ns.lawApplication||[]).map(l=>l.element+'：'+l.satisfied+'。'+l.reasoning).join('\n');
+  const parties=(cs.parties||[]);
+  const plaintiffs=parties.filter(p=>p.role.includes('原告')||p.role.includes('申请人')).map(p=>p.name).join('、');
+  const defendants=parties.filter(p=>p.role.includes('被告')||p.role.includes('被申请人')).map(p=>p.name).join('、');
+
+  let draft='民 事 起 诉 状\n\n';
+  draft+='原告：'+(plaintiffs||'（原告姓名/名称）')+'\n';
+  draft+='被告：'+(defendants||'（被告姓名/名称）')+'\n\n';
+  draft+='诉讼请求：\n'+(claims||'（请填写诉讼请求）')+'\n\n';
+  draft+='事实与理由：\n'+(cs.background||'（请填写案件事实）')+'\n\n';
+  draft+='请求权基础：'+(basis||'（待确定）')+'\n\n';
+  draft+='要件分析：\n'+(elements||'（待拆解）')+'\n\n';
+  draft+='争议焦点：'+(disputes||'（待归纳）')+'\n\n';
+  draft+='事实认定：\n'+(findings||'（待认定）')+'\n\n';
+  draft+='法律适用：\n'+(lawApp||'（待判断）')+'\n\n';
+  draft+='此致\n'+(cs.court||'（受理法院）')+'\n\n';
+  draft+='具状人：\n'+new Date().toISOString().slice(0,10)+'\n';
+
+  ns.draftContent=draft;
+  Store.updateCase(cs.id,{analysis:cs.analysis});
+  renderCaseTab(cs);
+  toast('文书初稿已生成，请核对修改');
 }
 
 /* ============================================================
@@ -1217,6 +1508,18 @@ document.addEventListener('click',e=>{
     case 'save-ai':saveAI();break;
     case 'export-data':download('lawyer-workbench-backup.json',Store.exportAll());toast('已导出备份');break;
     case 'reset-data':resetData();break;
+    case 'ns-goto':{const cs=Store.getCase(curParam);if(cs)nsGotoStep(cs,parseInt(el.dataset.step));break;}
+    case 'ns-next':{const cs=Store.getCase(curParam);if(cs)nsNextStep(cs);break;}
+    case 'ns-prev':{const cs=Store.getCase(curParam);if(cs)nsPrevStep(cs);break;}
+    case 'ns-add-row':{const cs=Store.getCase(curParam);if(cs)nsAddRow(cs,parseInt(el.dataset.step));break;}
+    case 'ns-del-row':{const cs=Store.getCase(curParam);if(cs)nsDelRow(cs,parseInt(el.dataset.step),parseInt(el.dataset.row));break;}
+    case 'ns-ai':{const cs=Store.getCase(curParam);if(cs)nsAI(cs,parseInt(el.dataset.step));break;}
+    case 'ns-show-lib':{const cs=Store.getCase(curParam);if(cs)nsShowLib(cs);break;}
+    case 'ns-show-defense-lib':{const cs=Store.getCase(curParam);if(cs)nsShowDefenseLib(cs);break;}
+    case 'ns-pick-lib':{const cs=Store.getCase(curParam);if(cs)nsPickLib(cs,parseInt(el.dataset.idx));break;}
+    case 'ns-pick-defense':{const cs=Store.getCase(curParam);if(cs)nsPickDefense(cs,parseInt(el.dataset.idx));break;}
+    case 'ns-gen-draft':{const cs=Store.getCase(curParam);if(cs)nsGenDraft(cs);break;}
+    case 'ns-complete':{const cs=Store.getCase(curParam);if(cs){const ns=getNineStep(cs);if(!ns.completedSteps.includes(9))ns.completedSteps.push(9);Store.updateCase(cs.id,{analysis:cs.analysis});toast('九步法分析完成！');renderCaseTab(cs);}break;}
     case 'close-modal':closeModal();break;
   }
 });

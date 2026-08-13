@@ -230,7 +230,7 @@
   // ---------- CRUD：案件 ----------
   function addCase(obj){
     const c=Object.assign({id:uid(),createdAt:new Date().toISOString().slice(0,10),
-      timeline:[],evidence:[],analysis:{elements:'',disputes:'',risks:'',predict:''}}, obj);
+      timeline:[],evidence:[],analysis:{elements:'',disputes:'',risks:'',predict:'',nineStep:null}}, obj);
     state.cases.unshift(c);
     addAuditLog('create', 'case', c.id, c.title);
     save(); return c;
