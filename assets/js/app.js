@@ -344,7 +344,7 @@ function renderCaseTab(cs){
       infoCard('背景',[['案件描述',cs.background||'未填写']])+
     '</div>'+
     '<div class="card" style="margin-top:16px"><div class="card-h"><h3>'+icon('sparkle')+' 一句话研判</h3></div><div class="card-b" id="oneLiner"></div></div>';
-    $('#oneLiner').innerHTML='<span class="muted">点击下方「AI 分析」标签，运行结构化分析获取要件、争议焦点与风险研判。</span>';
+    $('#oneLiner').innerHTML='<span class="muted">点击下方「九步法分析」标签，按要件审判九步法逐步分析案件。</span>';
   }
   else if(caseTab==='timeline'){
     let tl=cs.timeline.slice().sort((a,b)=>a.date.localeCompare(b.date));
@@ -813,7 +813,7 @@ async function chatSend(){
   renderChat();
 }
 function offlineReply(txt){
-  return '已收到你的问题。在离线模式下，我为你拆解分析路径（基于 Legal-Skills-Chinese）：\n\n1. 事实与要件（legal-element-extraction）：先厘清主体、标的、行为、时间等要件事实。\n2. 争议焦点（dispute-issue-identification）：明确双方分歧的法律争点。\n3. 规范检索（legal-article-retrieval / legal-norm-validity-check）：定位并核验相关法条效力。\n4. 类案参考（case-retrieval）：查找同类裁判要旨（指导性案例应参照）。\n5. 推理与论证（deductive-reasoning / argument-chain-construction）：涵摄并构建论证链。\n6. 风险与预判（legal-risk-assessment / legal-judgment-prediction）：评估风险、预判走向。\n\n建议：使用左侧「结构化工作流」或进入对应案件「AI 分析」获取可填写的模板。配置 AI 密钥后可获得实时生成。';
+  return '已收到你的问题。在离线模式下，我为你拆解分析路径（基于 Legal-Skills-Chinese）：\n\n1. 事实与要件（legal-element-extraction）：先厘清主体、标的、行为、时间等要件事实。\n2. 争议焦点（dispute-issue-identification）：明确双方分歧的法律争点。\n3. 规范检索（legal-article-retrieval / legal-norm-validity-check）：定位并核验相关法条效力。\n4. 类案参考（case-retrieval）：查找同类裁判要旨（指导性案例应参照）。\n5. 推理与论证（deductive-reasoning / argument-chain-construction）：涵摄并构建论证链。\n6. 风险与预判（legal-risk-assessment / legal-judgment-prediction）：评估风险、预判走向。\n\n建议：使用左侧「结构化工作流」或进入案件「九步法分析」按步骤分析。配置 AI 密钥后可获得实时生成。';
 }
 
 /* ============================================================
@@ -1032,9 +1032,8 @@ function renderRisk(c){
 }
 function runRisk(){
   const cs=Store.getCase(riskCaseId);if(!cs){toast('请选择案件','err');return;}
-  // 基于案件实际内容动态生成风险
   const a=cs.analysis||{};
-  const hasAnalysis=a.risks||a.disputes||a.elements;
+  const ns=a.nineStep;
   const risks=[];
   // 基于证据完整性
   const evScore=cs.evidence.length>=3?1:cs.evidence.length>=1?2:3;
@@ -1045,19 +1044,32 @@ function runRisk(){
   risks.push({name:'时效/期限风险',p:dlScore,i:4,why:nearEvents.length>0?'未来 14 天有 '+nearEvents.length+' 个节点临近':'暂无近期期限'});
   // 基于标的金额
   if(cs.amount>100000){risks.push({name:'对方偿债能力',p:3,i:4,why:'标的金额 '+fmtMoney(cs.amount)+' 元，执行到位率需评估'});}
-  // 基于分析内容
-  if(a.risks){risks.push({name:'AI 识别的风险项',p:2,i:3,why:'详见案件 AI 分析中的风险评估'});}
+  // 基于九步法分析数据
+  if(ns){
+    const unproven=(ns.elements||[]).filter(e=>e.status==='未证明');
+    if(unproven.length>0) risks.push({name:'要件举证不足',p:3,i:4,why:unproven.length+' 个要件尚未证明：'+unproven.map(e=>e.element).join('、')});
+    const unmet=(ns.lawApplication||[]).filter(l=>l.satisfied==='不满足');
+    if(unmet.length>0) risks.push({name:'要件不满足',p:4,i:4,why:unmet.length+' 个要件判断为不满足：'+unmet.map(l=>l.element).join('、')});
+    const noBurden=(ns.burdenOfProof||[]).filter(b=>b.status==='未举证');
+    if(noBurden.length>0) risks.push({name:'举证责任未完成',p:3,i:3,why:noBurden.length+' 项待证事实尚未举证'});
+  } else if(a.risks){
+    risks.push({name:'AI 识别的风险项',p:2,i:3,why:'详见案件分析中的风险评估'});
+  }
   // 通用风险
   risks.push({name:'法条适用风险',p:2,i:3,why:'法律关系的定性可能存在分歧'});
   risks.push({name:'程序合规风险',p:1,i:2,why:'诉讼主体/管辖等程序事项'});
-  // matrix 5x? -> display 4 cols (低/中/高/极高) x probability
+  // 争议焦点：优先从九步法读取
   const body=$('#riskBody');
-  const hasDisputes = cs.analysis&&cs.analysis.disputes;
-  const disputes = hasDisputes ? cs.analysis.disputes : '';
-  const disputeCard = hasDisputes
-    ? '<div class="report" style="white-space:pre-wrap">'+esc(disputes)+'</div>'
+  let disputeText='';
+  if(ns&&(ns.disputes||[]).length>0){
+    disputeText=ns.disputes.map(d=>'【'+d.type+'】'+d.issue+'\n  原告：'+d.plaintiffPos+'\n  被告：'+d.defendantPos+(d.keyEvidence?'\n  关键证据：'+d.keyEvidence:'')).join('\n\n');
+  } else if(a.disputes){
+    disputeText=a.disputes;
+  }
+  const disputeCard = disputeText
+    ? '<div class="report" style="white-space:pre-wrap">'+esc(disputeText)+'</div>'
     : '<div class="empty" style="padding:10px 0"><div>'+icon('brain')+'</div><p>尚未归纳争议焦点</p></div>'+
-      '<div class="small muted" style="margin-bottom:10px">建议先在案件「AI 分析」中归纳争议焦点，生成结果会自动回填到此处。</div>'+
+      '<div class="small muted" style="margin-bottom:10px">建议先在案件「九步法分析」中归纳争议焦点，生成结果会自动回填到此处。</div>'+
       '<button class="btn primary" data-act="goto-analysis" data-id="'+cs.id+'">'+icon('brain')+' 去归纳争议焦点</button>';
   body.innerHTML=
    '<div class="grid cols-2" style="align-items:start">'+
