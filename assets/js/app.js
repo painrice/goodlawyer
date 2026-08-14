@@ -852,7 +852,13 @@ const SKILL_BOUND={
   'case-retrieval':'case-search','legal-article-retrieval':'law-search','legal-norm-validity-check':'law-search',
   'legal-element-extraction':'risk','dispute-issue-identification':'risk','legal-risk-assessment':'risk',
   'legal-document-summarization':'draft','legal-document-formatting':'draft','judgment-document-generation':'draft',
-  'legal-judgment-prediction':'risk','argument-chain-construction':'risk'
+  'legal-judgment-prediction':'risk','argument-chain-construction':'risk',
+  'claim-analysis':'cases','claim-basis-retrieval':'cases','defense-analysis':'cases',
+  'burden-of-proof-allocation':'cases','evidence-evaluation':'cases',
+  'conflict-of-interest-check':'cases','trial-outline-generation':'draft',
+  'evidence-catalog-generation':'cases','case-closing-report':'cases',
+  'trial-scheduling-and-deadline-monitoring':'litigation','case-lifecycle-planning':'cases',
+  'billing-and-litigation-budget':'finance'
 };
 function openSkill(dir){
   const s=skillByDir(dir);if(!s)return;
